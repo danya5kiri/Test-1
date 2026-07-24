@@ -264,37 +264,93 @@ export function bookingContactUrl({
 export type WeatherSummary = {
   temperature: string;
   label: string;
+  icon: string;
 };
 
-export async function fetchVladivostokWeather(): Promise<WeatherSummary> {
+export type WeatherDay = {
+  date: string;
+  label: string;
+  icon: string;
+  temperatureMin: string;
+  temperatureMax: string;
+};
+
+export type WeatherForecast = Record<string, WeatherDay>;
+
+export type VladivostokWeather = {
+  current: WeatherSummary;
+  forecast: WeatherForecast;
+};
+
+function signedTemperature(value: number) {
+  if (!Number.isFinite(value)) return "—";
+  const rounded = Math.round(value);
+  return `${rounded > 0 ? "+" : ""}${rounded}°`;
+}
+
+function weatherAppearance(code: number) {
+  if (code === 0) return { label: "Ясно", icon: "☀️" };
+  if (code <= 2) return { label: "Малооблачно", icon: "🌤️" };
+  if (code === 3) return { label: "Облачно", icon: "☁️" };
+  if (code === 45 || code === 48) return { label: "Туман", icon: "🌫️" };
+  if (code >= 51 && code <= 57) return { label: "Морось", icon: "🌦️" };
+  if (code >= 61 && code <= 67) return { label: "Дождь", icon: "🌧️" };
+  if (code >= 71 && code <= 77) return { label: "Снег", icon: "🌨️" };
+  if (code >= 80 && code <= 82) return { label: "Ливень", icon: "🌧️" };
+  if (code >= 85 && code <= 86) return { label: "Снегопад", icon: "🌨️" };
+  if (code >= 95) return { label: "Гроза", icon: "⛈️" };
+  return { label: "Переменная облачность", icon: "⛅" };
+}
+
+export async function fetchVladivostokWeather(): Promise<VladivostokWeather> {
   const url = new URL("https://api.open-meteo.com/v1/forecast");
   url.searchParams.set("latitude", "43.1155");
   url.searchParams.set("longitude", "131.8855");
   url.searchParams.set("current", "temperature_2m,weather_code");
+  url.searchParams.set(
+    "daily",
+    "weather_code,temperature_2m_max,temperature_2m_min",
+  );
+  url.searchParams.set("forecast_days", "16");
   url.searchParams.set("timezone", "Asia/Vladivostok");
   const response = await fetch(url);
   if (!response.ok) throw new Error("weather");
   const data = (await response.json()) as {
     current?: { temperature_2m?: number; weather_code?: number };
+    daily?: {
+      time?: string[];
+      weather_code?: number[];
+      temperature_2m_max?: number[];
+      temperature_2m_min?: number[];
+    };
   };
   const temperature = Number(data.current?.temperature_2m);
   const code = Number(data.current?.weather_code);
-  const label =
-    code === 0
-      ? "Ясно"
-      : code <= 3
-        ? "Облачно"
-        : code <= 67
-          ? "Дождь"
-          : code <= 77
-            ? "Осадки"
-            : code <= 82
-              ? "Ливень"
-              : "Гроза";
+  const appearance = weatherAppearance(code);
+  const forecast: WeatherForecast = {};
+  const dates = data.daily?.time ?? [];
+
+  dates.forEach((date, index) => {
+    const dayAppearance = weatherAppearance(
+      Number(data.daily?.weather_code?.[index]),
+    );
+    forecast[date] = {
+      date,
+      ...dayAppearance,
+      temperatureMin: signedTemperature(
+        Number(data.daily?.temperature_2m_min?.[index]),
+      ),
+      temperatureMax: signedTemperature(
+        Number(data.daily?.temperature_2m_max?.[index]),
+      ),
+    };
+  });
+
   return {
-    temperature: Number.isFinite(temperature)
-      ? `${temperature > 0 ? "+" : ""}${Math.round(temperature)}°`
-      : "—",
-    label,
+    current: {
+      temperature: signedTemperature(temperature),
+      ...appearance,
+    },
+    forecast,
   };
 }

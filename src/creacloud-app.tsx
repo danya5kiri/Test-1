@@ -10,6 +10,8 @@ import {
   fetchVladivostokWeather,
   fetchWorkingState,
   sendWorkingPayload,
+  WeatherDay,
+  WeatherForecast,
   WeatherSummary,
 } from "./creacloud-api";
 import {
@@ -51,6 +53,7 @@ type DataStatus = "loading" | "live" | "cached" | "error";
 
 const CACHE_KEY = "creacloud-test-1-working-cache-v2";
 const RECENT_WRITES_KEY = "creacloud-test-1-recent-writes-v2";
+const TEAM_DAILY_NOTICE_KEY = "creacloud-test-1-team-daily-notice-v1";
 const RECENT_WRITE_TTL = 15 * 60 * 1000;
 
 function emptyWorkingState(): WorkingState {
@@ -225,31 +228,10 @@ function SplitTitle({
 }
 
 function Splash({ hidden }: { hidden: boolean }) {
-  const phrases = useMemo(
-    () => [
-      "собираем креаторов",
-      "смотрим туры",
-      "рейтингуем креаторов",
-      "респектуем креаторам",
-    ],
-    [],
-  );
-  const [phrase, setPhrase] = useState(0);
-
-  useEffect(() => {
-    const timer = window.setInterval(
-      () => setPhrase((value) => (value + 1) % phrases.length),
-      1000,
-    );
-    return () => window.clearInterval(timer);
-  }, [phrases.length]);
-
   return (
     <div className={`splash${hidden ? " splash--hidden" : ""}`} aria-hidden={hidden}>
-      <Logo />
-      <p className="splash__subtitle">креаторская студия «Корсар»</p>
-      <span className="splash__pulse" />
-      <p className="splash__phrase">{phrases[phrase]}</p>
+      <span className="splash__pulse" aria-hidden="true" />
+      <p className="splash__phrase">CREACLOUD</p>
     </div>
   );
 }
@@ -407,12 +389,10 @@ function Dashboard({
   state,
   weather,
   onOpen,
-  onTestInfo,
 }: {
   state: WorkingState;
   weather: WeatherSummary;
   onOpen: (panel: Exclude<Panel, null>) => void;
-  onTestInfo: () => void;
 }) {
   const rankings = getRankings(state);
   const leaderSlides = [
@@ -469,9 +449,6 @@ function Dashboard({
       <header className="dashboard__header">
         <div className="dashboard__brand">
           <Logo compact />
-          <button className="test-badge" onClick={onTestInfo}>
-            TEST-1
-          </button>
         </div>
         <button
           className="round-button"
@@ -515,11 +492,16 @@ function Dashboard({
         <button className="tile tile--rating" onClick={() => onOpen("rating")}>
           <div>
             <SplitTitle strong="Рейтинг" light="креаторов" as="h2" />
-            <p>
-              {currentLeader.row
-                ? `${currentLeader.row.creator} · ${currentLeader.value(currentLeader.row)}`
-                : "Рейтинг формируется"}
-            </p>
+            {currentLeader.row ? (
+              <p className="leader-highlight">
+                <strong className="leader-nick">
+                  {currentLeader.row.creator}
+                </strong>
+                <span>{currentLeader.value(currentLeader.row)}</span>
+              </p>
+            ) : (
+              <p>Рейтинг формируется</p>
+            )}
             <div className="leader-carousel-meta">
               <span>{currentLeader.label}</span>
               <span>
@@ -735,6 +717,7 @@ function CalendarMonth({
 
 function BookingPanel({
   state,
+  forecast,
   view,
   activeCreator,
   selectedDate,
@@ -750,6 +733,7 @@ function BookingPanel({
   busy,
 }: {
   state: WorkingState;
+  forecast: WeatherForecast;
   view: BookingView;
   activeCreator: string;
   selectedDate: string;
@@ -781,6 +765,7 @@ function BookingPanel({
     )
     .sort((a, b) => a.date.localeCompare(b.date));
   const schedule = SCHEDULE[selectedDate] ?? [];
+  const selectedWeather: WeatherDay | undefined = forecast[selectedDate];
 
   if (view === "manage") {
     return (
@@ -871,6 +856,20 @@ function BookingPanel({
           </div>
           <span>{schedule.length} тура</span>
         </div>
+        {selectedWeather && (
+          <div className="selected-date-weather" aria-label="Прогноз погоды">
+            <span className="selected-date-weather__icon" aria-hidden="true">
+              {selectedWeather.icon}
+            </span>
+            <div>
+              <strong>{selectedWeather.label}</strong>
+              <span>
+                {selectedWeather.temperatureMin}…{selectedWeather.temperatureMax}
+              </span>
+            </div>
+            <small>Владивосток</small>
+          </div>
+        )}
         {view === "transfer" && (
           <label className="field">
             <span>Какую бронь перенести</span>
@@ -1556,6 +1555,48 @@ function StoryPanel({
   );
 }
 
+type RecentTourEvent = {
+  id: string;
+  kind: "booking" | "content";
+  creator: string;
+  tourName: string;
+  date: string;
+  createdAt: string;
+};
+
+function getRecentTourEvents(state: WorkingState) {
+  const events: RecentTourEvent[] = [
+    ...state.bookings.map((booking) => ({
+      id: `booking-${booking.id}`,
+      kind: "booking" as const,
+      creator: booking.creator,
+      tourName: booking.tourName,
+      date: booking.date,
+      createdAt: booking.createdAt,
+    })),
+    ...state.content.map((item) => ({
+      id: `content-${item.id}`,
+      kind: "content" as const,
+      creator: item.creator,
+      tourName: item.tourName,
+      date: item.date,
+      createdAt: item.createdAt,
+    })),
+  ];
+
+  return events
+    .sort((a, b) => {
+      const aTimestamp = Date.parse(a.createdAt);
+      const bTimestamp = Date.parse(b.createdAt);
+      if (Number.isFinite(aTimestamp) || Number.isFinite(bTimestamp)) {
+        return (Number.isFinite(bTimestamp) ? bTimestamp : 0) -
+          (Number.isFinite(aTimestamp) ? aTimestamp : 0);
+      }
+      return b.date.localeCompare(a.date);
+    })
+    .slice(0, 5);
+}
+
 function NoticesPanel({
   state,
   dataStatus,
@@ -1570,36 +1611,41 @@ function NoticesPanel({
   onRefresh: () => void;
 }) {
   const rankings = getRankings(state);
-  const todayBookings = state.bookings.filter(
-    (booking) =>
-      booking.status === "active" &&
-      booking.createdAt.slice(0, 10) === DEMO_TODAY,
-  );
+  const recentEvents = getRecentTourEvents(state);
   return (
     <div className="notices-layout">
       <section className="notice-card notice-card--daily">
         <span className="notice-icon">
           <Icon name="bell" />
         </span>
-        <small>Ежедневная сводка</small>
-        <SplitTitle strong="Сегодня" light="в мастерской" as="h3" />
-        <ul>
-          <li>
-            <strong>Новые записи:</strong> {todayBookings.length}
-          </li>
-          <li>
-            <strong>Лидер сейчас:</strong> {rankings[0]?.creator}
-          </li>
-          <li>
-            <strong>Опубликовано:</strong> {state.content.length}{" "}
-            {pluralRu(
-              state.content.length,
-              "материал",
-              "материала",
-              "материалов",
-            )}
-          </li>
-        </ul>
+        <small>Ежедневное уведомление</small>
+        <SplitTitle strong="5 последних" light="событий" as="h3" />
+        {recentEvents.length ? (
+          <ol className="recent-events">
+            {recentEvents.map((event) => (
+              <li key={event.id}>
+                <span className="recent-events__icon">
+                  <Icon
+                    name={event.kind === "booking" ? "calendar" : "file"}
+                    size={16}
+                  />
+                </span>
+                <span>
+                  <strong>{event.creator}</strong>
+                  <small>
+                    {event.kind === "booking"
+                      ? "записался на тур"
+                      : "добавил материал"}{" "}
+                    · {event.tourName}
+                  </small>
+                </span>
+                <time>{formatDateRu(event.date)}</time>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="recent-events__empty">Новых событий пока нет.</p>
+        )}
       </section>
       <section className="notice-card notice-card--leader">
         <span className="notice-icon">
@@ -1667,7 +1713,9 @@ export default function CreacloudApp() {
   const [weather, setWeather] = useState<WeatherSummary>({
     temperature: "—",
     label: "Владивосток",
+    icon: "☁️",
   });
+  const [weatherForecast, setWeatherForecast] = useState<WeatherForecast>({});
   const [activeCreator, setActiveCreator] = useState("");
   const [profileInput, setProfileInput] = useState("");
   const [profileError, setProfileError] = useState("");
@@ -1781,14 +1829,17 @@ export default function CreacloudApp() {
 
     const weatherRequest = fetchVladivostokWeather()
       .then((next) => {
-        if (!cancelled) setWeather(next);
+        if (!cancelled) {
+          setWeather(next.current);
+          setWeatherForecast(next.forecast);
+        }
       })
       .catch(() => {
         // Weather is informative and must not block the main data.
       });
 
     Promise.allSettled([dataRequest, weatherRequest]).then(() => {
-      const remaining = Math.max(0, 1050 - (Date.now() - startedAt));
+      const remaining = Math.max(0, 1450 - (Date.now() - startedAt));
       window.setTimeout(() => {
         if (!cancelled) setLoading(false);
       }, remaining);
@@ -1828,6 +1879,21 @@ export default function CreacloudApp() {
   function closePanel() {
     setPanel(null);
     setToolbarHidden(false);
+  }
+
+  function enterTeamPortal() {
+    let showDailyNotice = true;
+    try {
+      showDailyNotice =
+        window.localStorage.getItem(TEAM_DAILY_NOTICE_KEY) !== DEMO_TODAY;
+      if (showDailyNotice) {
+        window.localStorage.setItem(TEAM_DAILY_NOTICE_KEY, DEMO_TODAY);
+      }
+    } catch {
+      // The notification remains available when browser storage is unavailable.
+    }
+    setEntered(true);
+    if (showDailyNotice) setPanel("notices");
   }
 
   function openBooking(view: BookingView = "new") {
@@ -2210,6 +2276,7 @@ export default function CreacloudApp() {
         >
           <BookingPanel
             state={state}
+            forecast={weatherForecast}
             view={bookingView}
             activeCreator={activeCreator}
             selectedDate={selectedDate}
@@ -2374,7 +2441,7 @@ export default function CreacloudApp() {
     <>
       <Splash hidden={!loading} />
       {!loading && !entered ? (
-        <Welcome onEnter={() => setEntered(true)} />
+        <Welcome onEnter={enterTeamPortal} />
       ) : (
         <div className="site-shell">
           <div
@@ -2389,7 +2456,6 @@ export default function CreacloudApp() {
                 if (next === "booking") openBooking("new");
                 else setPanel(next);
               }}
-              onTestInfo={() => setPanel("notices")}
             />
             <Toolbar
               active={panel}
