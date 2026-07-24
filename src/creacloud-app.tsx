@@ -1,0 +1,1921 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Booking,
+  ContentItem,
+  DEMO_TODAY,
+  DemoState,
+  formatDateRu,
+  getTour,
+  INITIAL_DEMO_STATE,
+  normalizeCreator,
+  platformFromLink,
+  SCHEDULE,
+  TOURS,
+  TOTAL_UNIQUE_TOURS,
+} from "./creacloud-data";
+
+type Panel =
+  | "booking"
+  | "profile-login"
+  | "profile"
+  | "content"
+  | "rating"
+  | "results"
+  | "story"
+  | "notices"
+  | null;
+
+type BookingView = "new" | "manage" | "transfer";
+type RatingMode = "visits" | "unique" | "content";
+
+const STORAGE_KEY = "creacloud-test-1-v1";
+
+function cloneInitialState(): DemoState {
+  return JSON.parse(JSON.stringify(INITIAL_DEMO_STATE)) as DemoState;
+}
+
+function pluralRu(
+  value: number,
+  one: string,
+  few: string,
+  many: string,
+): string {
+  const absolute = Math.abs(value);
+  const mod100 = absolute % 100;
+  const mod10 = absolute % 10;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
+function Icon({
+  name,
+  size = 24,
+}: {
+  name:
+    | "arrow"
+    | "calendar"
+    | "user"
+    | "plus"
+    | "cloud"
+    | "file"
+    | "star"
+    | "close"
+    | "left"
+    | "right"
+    | "link"
+    | "check"
+    | "trash"
+    | "map"
+    | "bell";
+  size?: number;
+}) {
+  const paths = {
+    arrow: <path d="M5 12h14m-5-5 5 5-5 5" />,
+    calendar: (
+      <>
+        <rect x="3" y="5" width="18" height="16" rx="3" />
+        <path d="M8 3v4m8-4v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01" />
+      </>
+    ),
+    user: (
+      <>
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4.5 21c.7-4.2 3.1-6.3 7.5-6.3s6.8 2.1 7.5 6.3" />
+      </>
+    ),
+    plus: <path d="M12 5v14M5 12h14" />,
+    cloud: <path d="M6.5 18H18a4 4 0 0 0 .4-8 6.5 6.5 0 0 0-12.2-1.7A4.8 4.8 0 0 0 6.5 18Zm3 2-1 2m5-2-1 2m5-2-1 2" />,
+    file: (
+      <>
+        <path d="M6 3h8l4 4v14H6z" />
+        <path d="M14 3v5h5" />
+      </>
+    ),
+    star: <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z" />,
+    close: <path d="m7 7 10 10M17 7 7 17" />,
+    left: <path d="m15 18-6-6 6-6" />,
+    right: <path d="m9 18 6-6-6-6" />,
+    link: (
+      <>
+        <path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" />
+        <path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1" />
+      </>
+    ),
+    check: <path d="m5 12 4 4L19 6" />,
+    trash: (
+      <>
+        <path d="M4 7h16M9 7V4h6v3m3 0-1 14H7L6 7m4 4v6m4-6v6" />
+      </>
+    ),
+    map: (
+      <>
+        <path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3z" />
+        <path d="M9 3v15m6-12v15" />
+      </>
+    ),
+    bell: (
+      <>
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+        <path d="M10 21h4" />
+      </>
+    ),
+  };
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="icon"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {paths[name]}
+    </svg>
+  );
+}
+
+function Logo({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`logo${compact ? " logo--compact" : ""}`} aria-label="CREACLOUD">
+      <strong>CREA</strong>
+      <span>CLOUD</span>
+    </div>
+  );
+}
+
+function SplitTitle({
+  strong,
+  light,
+  as: Tag = "h2",
+}: {
+  strong: string;
+  light: string;
+  as?: "h1" | "h2" | "h3";
+}) {
+  return (
+    <Tag className="split-title">
+      <strong>{strong}</strong> <span>{light}</span>
+    </Tag>
+  );
+}
+
+function Splash({ hidden }: { hidden: boolean }) {
+  const phrases = useMemo(
+    () => [
+      "собираем креаторов",
+      "смотрим туры",
+      "рейтингуем креаторов",
+      "респектуем креаторам",
+    ],
+    [],
+  );
+  const [phrase, setPhrase] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setPhrase((value) => (value + 1) % phrases.length),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [phrases.length]);
+
+  return (
+    <div className={`splash${hidden ? " splash--hidden" : ""}`} aria-hidden={hidden}>
+      <Logo />
+      <p className="splash__subtitle">креаторская студия «Корсар»</p>
+      <span className="splash__pulse" />
+      <p className="splash__phrase">{phrases[phrase]}</p>
+    </div>
+  );
+}
+
+function Welcome({ onEnter }: { onEnter: () => void }) {
+  return (
+    <section className="welcome">
+      <div className="ambient ambient--lime" />
+      <div className="ambient ambient--violet" />
+      <div className="welcome__inner">
+        <Logo />
+        <div className="welcome__copy">
+          <SplitTitle strong="Привет," light="креатор!" as="h1" />
+          <p>Ты здесь впервые или уже с нами?</p>
+        </div>
+        <div className="welcome__actions">
+          <a
+            className="status-card status-card--new"
+            href="https://t.me/+nYzsW9t8e38xZGJi"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span className="status-card__index">01</span>
+            <SplitTitle strong="Я новый" light="участник" as="h2" />
+            <p>Познакомиться с командой в Telegram</p>
+            <span className="status-card__arrow">
+              <Icon name="arrow" />
+            </span>
+          </a>
+          <button className="status-card status-card--team" onClick={onEnter}>
+            <span className="status-card__index">02</span>
+            <SplitTitle strong="Я уже" light="в команде" as="h2" />
+            <p>Открыть дашборд CREACLOUD</p>
+            <span className="status-card__arrow">
+              <Icon name="arrow" />
+            </span>
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Toolbar({
+  active,
+  hidden,
+  onBooking,
+  onProfile,
+  onContent,
+}: {
+  active: Panel;
+  hidden: boolean;
+  onBooking: () => void;
+  onProfile: () => void;
+  onContent: () => void;
+}) {
+  return (
+    <nav
+      className={`toolbar${hidden ? " toolbar--hidden" : ""}`}
+      aria-label="Основные действия"
+    >
+      <button
+        className={active === "booking" ? "is-active" : ""}
+        onClick={onBooking}
+      >
+        <Icon name="calendar" />
+        <span>Бронь</span>
+      </button>
+      <button
+        className={
+          active === "profile" || active === "profile-login" ? "is-active" : ""
+        }
+        onClick={onProfile}
+      >
+        <Icon name="user" />
+        <span>ЛК</span>
+      </button>
+      <button
+        className={
+          active === "content" || active === "results" || active === "story"
+            ? "is-active"
+            : ""
+        }
+        onClick={onContent}
+      >
+        <Icon name="plus" />
+        <span>Контент</span>
+      </button>
+    </nav>
+  );
+}
+
+type RankingRow = {
+  creator: string;
+  visits: number;
+  unique: number;
+  materials: number;
+};
+
+function getRankings(state: DemoState): RankingRow[] {
+  const map = new Map<string, RankingRow & { uniqueKeys: Set<string> }>();
+  state.bookings
+    .filter((booking) => booking.status === "active")
+    .forEach((booking) => {
+      const current = map.get(booking.creator) ?? {
+        creator: booking.creator,
+        visits: 0,
+        unique: 0,
+        materials: 0,
+        uniqueKeys: new Set<string>(),
+      };
+      current.visits += 1;
+      const tour = getTour(booking.tourId);
+      if (tour) current.uniqueKeys.add(tour.uniqueKey);
+      current.unique = current.uniqueKeys.size;
+      map.set(booking.creator, current);
+    });
+  state.content.forEach((item) => {
+    const current = map.get(item.creator) ?? {
+      creator: item.creator,
+      visits: 0,
+      unique: 0,
+      materials: 0,
+      uniqueKeys: new Set<string>(),
+    };
+    current.materials += 1;
+    map.set(item.creator, current);
+  });
+  return [...map.values()]
+    .map((row) => ({
+      creator: row.creator,
+      visits: row.visits,
+      unique: row.unique,
+      materials: row.materials,
+    }))
+    .sort(
+      (a, b) =>
+        b.visits - a.visits ||
+        b.unique - a.unique ||
+        a.creator.localeCompare(b.creator, "ru"),
+    );
+}
+
+function Dashboard({
+  state,
+  onOpen,
+  onTestInfo,
+}: {
+  state: DemoState;
+  onOpen: (panel: Exclude<Panel, null>) => void;
+  onTestInfo: () => void;
+}) {
+  const rankings = getRankings(state);
+  const leader = rankings[0];
+  const activeBookings = state.bookings.filter(
+    (booking) => booking.status === "active",
+  );
+  const creators = new Set(activeBookings.map((booking) => booking.creator)).size;
+
+  return (
+    <main className="dashboard">
+      <header className="dashboard__header">
+        <div className="dashboard__brand">
+          <Logo compact />
+          <button className="test-badge" onClick={onTestInfo}>
+            ТЕСТ
+          </button>
+        </div>
+        <button
+          className="round-button"
+          aria-label="Вернуться наверх"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        >
+          ↑
+        </button>
+      </header>
+
+      <section className="bento" aria-label="Дашборд креатора">
+        <button className="tile tile--hero" onClick={() => onOpen("booking")}>
+          <div>
+            <SplitTitle strong="Выбрать" light="тур" as="h1" />
+            <p>Календарь и запись</p>
+          </div>
+          <span className="hero-arrow">
+            <Icon name="arrow" />
+          </span>
+        </button>
+
+        <article className="tile tile--weather">
+          <strong>Погода</strong>
+          <span className="weather-temp">+22°</span>
+          <Icon name="cloud" size={42} />
+        </article>
+
+        <article className="tile tile--season">
+          <strong>Сезон</strong>
+          <div className="season-ring">
+            <span>57%</span>
+          </div>
+        </article>
+
+        <button className="tile tile--rating" onClick={() => onOpen("rating")}>
+          <div>
+            <SplitTitle strong="Рейтинг" light="креаторов" as="h2" />
+            <p>{leader ? `${leader.creator} — лидер недели` : "Рейтинг формируется"}</p>
+          </div>
+          <span className="top-badge">ТОП</span>
+          <div className="podium" aria-hidden="true">
+            <span />
+            <span>
+              <Icon name="star" />
+            </span>
+            <span />
+          </div>
+        </button>
+
+        <button
+          className="tile tile--metric"
+          onClick={() => onOpen("results")}
+        >
+          <span className="metric-icon metric-icon--lime">
+            <Icon name="file" />
+          </span>
+          <strong>{state.content.length}</strong>
+          <span>
+            {pluralRu(state.content.length, "материал", "материала", "материалов")}
+          </span>
+        </button>
+
+        <button
+          className="tile tile--metric"
+          onClick={() => onOpen("notices")}
+        >
+          <span className="metric-icon metric-icon--violet">
+            <Icon name="user" />
+          </span>
+          <strong>{creators}</strong>
+          <span>{pluralRu(creators, "креатор", "креатора", "креаторов")}</span>
+        </button>
+      </section>
+    </main>
+  );
+}
+
+function ModalShell({
+  strong,
+  light,
+  kicker,
+  onClose,
+  children,
+  className = "",
+}: {
+  strong: string;
+  light: string;
+  kicker: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className="modal-layer"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${strong} ${light}`}
+    >
+      <button
+        className="modal-layer__backdrop"
+        onClick={onClose}
+        aria-label="Закрыть окно"
+      />
+      <section className={`modal ${className}`}>
+        <header className="modal__header">
+          <div>
+            <span className="modal__kicker">{kicker}</span>
+            <SplitTitle strong={strong} light={light} as="h2" />
+          </div>
+          <button
+            className="round-button"
+            onClick={onClose}
+            aria-label="Закрыть и вернуться на главную"
+          >
+            ↑
+          </button>
+        </header>
+        <div className="demo-mode-note">
+          <span />
+          Тестовые данные · рабочая база не изменяется
+        </div>
+        <div className="modal__body">{children}</div>
+      </section>
+    </div>
+  );
+}
+
+function CalendarMonth({
+  month,
+  selectedDate,
+  state,
+  onMonth,
+  onSelect,
+}: {
+  month: string;
+  selectedDate: string;
+  state: DemoState;
+  onMonth: (month: string) => void;
+  onSelect: (date: string) => void;
+}) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const firstDay = new Date(Date.UTC(year, monthNumber - 1, 1));
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const mondayOffset = (firstDay.getUTCDay() + 6) % 7;
+  const cells: Array<{ date: string; day: number } | null> = [
+    ...Array.from({ length: mondayOffset }, () => null),
+    ...Array.from({ length: lastDay }, (_, index) => {
+      const day = index + 1;
+      return {
+        date: `${year}-${String(monthNumber).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+        day,
+      };
+    }),
+  ];
+  const months: Record<string, string> = {
+    "2026-07": "Июль 2026",
+    "2026-08": "Август 2026",
+  };
+  const activeBookings = state.bookings.filter(
+    (booking) => booking.status === "active",
+  );
+
+  return (
+    <section className="calendar-card" aria-label="Календарь туров">
+      <div className="calendar-card__controls">
+        <button
+          aria-label="Предыдущий месяц"
+          disabled={month === "2026-07"}
+          onClick={() => onMonth("2026-07")}
+        >
+          <Icon name="left" />
+        </button>
+        <strong>{months[month]}</strong>
+        <button
+          aria-label="Следующий месяц"
+          disabled={month === "2026-08"}
+          onClick={() => onMonth("2026-08")}
+        >
+          <Icon name="right" />
+        </button>
+      </div>
+      <div className="calendar-weekdays">
+        {["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"].map((day) => (
+          <span key={day}>{day}</span>
+        ))}
+      </div>
+      <div className="calendar-grid">
+        {cells.map((cell, index) => {
+          if (!cell) return <span key={`empty-${index}`} />;
+          const scheduled = SCHEDULE[cell.date] ?? [];
+          const occupied = scheduled.filter((tourId) =>
+            activeBookings.some(
+              (booking) =>
+                booking.date === cell.date && booking.tourId === tourId,
+            ),
+          ).length;
+          const disabled = cell.date < DEMO_TODAY || scheduled.length === 0;
+          return (
+            <button
+              key={cell.date}
+              className={[
+                selectedDate === cell.date ? "is-selected" : "",
+                scheduled.length ? "has-tours" : "",
+                scheduled.length > 0 && occupied === scheduled.length
+                  ? "is-full"
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              disabled={disabled}
+              onClick={() => onSelect(cell.date)}
+              aria-label={`${cell.day} число${scheduled.length ? `, ${scheduled.length} тура` : ""}`}
+            >
+              <span>{cell.day}</span>
+              {scheduled.length > 0 && <i />}
+            </button>
+          );
+        })}
+      </div>
+      <div className="calendar-legend">
+        <span>
+          <i className="is-free" /> Есть туры
+        </span>
+        <span>
+          <i className="is-selected" /> Выбрано
+        </span>
+        <span>
+          <i className="is-full" /> Нет мест
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function BookingPanel({
+  state,
+  view,
+  activeCreator,
+  selectedDate,
+  selectedTour,
+  transferSourceId,
+  onView,
+  onDate,
+  onTour,
+  onCreator,
+  onTransferSource,
+  onSubmit,
+  onCancelBooking,
+}: {
+  state: DemoState;
+  view: BookingView;
+  activeCreator: string;
+  selectedDate: string;
+  selectedTour: string;
+  transferSourceId: string;
+  onView: (view: BookingView) => void;
+  onDate: (date: string) => void;
+  onTour: (tourId: string) => void;
+  onCreator: (creator: string) => void;
+  onTransferSource: (bookingId: string) => void;
+  onSubmit: () => void;
+  onCancelBooking: (bookingId: string) => void;
+}) {
+  const [month, setMonth] = useState(selectedDate.startsWith("2026-08") ? "2026-08" : "2026-07");
+  const activeBookings = state.bookings.filter(
+    (booking) => booking.status === "active",
+  );
+  const upcoming = activeBookings
+    .filter(
+      (booking) =>
+        booking.creator === activeCreator && booking.date >= DEMO_TODAY,
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const schedule = SCHEDULE[selectedDate] ?? [];
+
+  if (view === "manage") {
+    return (
+      <div className="booking-manage">
+        <div className="section-intro">
+          <strong>{activeCreator || "Ваши брони"}</strong>
+          <p>Перенос и отмена работают только с будущими активными записями.</p>
+        </div>
+        {upcoming.length ? (
+          <div className="booking-list">
+            {upcoming.map((booking) => (
+              <article key={booking.id} className="booking-card">
+                <span className="booking-card__date">
+                  {formatDateRu(booking.date)}
+                </span>
+                <strong>{getTour(booking.tourId)?.name}</strong>
+                <div className="booking-card__actions">
+                  <button
+                    onClick={() => {
+                      onTransferSource(booking.id);
+                      onView("transfer");
+                    }}
+                  >
+                    Перенести
+                  </button>
+                  <button
+                    className="is-danger"
+                    onClick={() => onCancelBooking(booking.id)}
+                  >
+                    <Icon name="trash" size={18} />
+                    Отменить
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <Icon name="calendar" size={34} />
+            <strong>Активных броней нет</strong>
+            <p>Выберите новый тур в календаре.</p>
+          </div>
+        )}
+        <button className="secondary-button" onClick={() => onView("new")}>
+          Новая запись
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="booking-layout">
+      <CalendarMonth
+        month={month}
+        selectedDate={selectedDate}
+        state={state}
+        onMonth={(nextMonth) => {
+          setMonth(nextMonth);
+          const fallback = nextMonth === "2026-08" ? "2026-08-01" : "2026-07-24";
+          onDate(fallback);
+          onTour("");
+        }}
+        onSelect={(date) => {
+          onDate(date);
+          onTour("");
+        }}
+      />
+      <section className="booking-side">
+        <div className="selected-date-head">
+          <div>
+            <small>{view === "transfer" ? "Новая дата" : "Выбранная дата"}</small>
+            <SplitTitle
+              strong={selectedDate.slice(-2)}
+              light={formatDateRu(selectedDate).replace(/^\d+\s/, "")}
+              as="h3"
+            />
+          </div>
+          <span>{schedule.length} тура</span>
+        </div>
+        {view === "transfer" && (
+          <label className="field">
+            <span>Какую бронь перенести</span>
+            <select
+              value={transferSourceId}
+              onChange={(event) => onTransferSource(event.target.value)}
+            >
+              <option value="">Выберите активную запись</option>
+              {upcoming.map((booking) => (
+                <option key={booking.id} value={booking.id}>
+                  {formatDateRu(booking.date)} · {getTour(booking.tourId)?.short}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="tour-options">
+          {schedule.map((tourId, index) => {
+            const tour = getTour(tourId);
+            const occupant = activeBookings.find(
+              (booking) =>
+                booking.date === selectedDate &&
+                booking.tourId === tourId &&
+                booking.id !== transferSourceId,
+            );
+            if (!tour) return null;
+            return (
+              <button
+                key={tourId}
+                disabled={Boolean(occupant)}
+                className={[
+                  selectedTour === tourId ? "is-selected" : "",
+                  `is-tone-${(index % 3) + 1}`,
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onClick={() => onTour(tourId)}
+              >
+                <span className="tour-option__symbol">{tour.emoji}</span>
+                <span>
+                  <strong>{tour.name}</strong>
+                  <small>{occupant ? "Занято" : "Свободно"}</small>
+                </span>
+                <Icon name="right" />
+              </button>
+            );
+          })}
+        </div>
+        <label className="field">
+          <span>Ник креатора</span>
+          <input
+            value={activeCreator}
+            onChange={(event) => onCreator(event.target.value)}
+            placeholder="@username"
+            autoCapitalize="none"
+          />
+        </label>
+        <button className="primary-button" onClick={onSubmit}>
+          {view === "transfer" ? "Сохранить перенос" : "Забронировать тестово"}
+        </button>
+        <button
+          className="text-button"
+          onClick={() => onView(view === "transfer" ? "new" : "manage")}
+        >
+          {view === "transfer" ? "Отменить перенос" : "Управлять текущей бронью"}
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function ProfileLogin({
+  creators,
+  value,
+  error,
+  onChange,
+  onSubmit,
+}: {
+  creators: string[];
+  value: string;
+  error: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="profile-login-layout">
+      <section className="profile-login-card">
+        <label className="field">
+          <span>Введите ник</span>
+          <input
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="@username"
+            autoCapitalize="none"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") onSubmit();
+            }}
+          />
+        </label>
+        <p>
+          Покажем поездки, контент, рейтинг, текущую бронь и персональную
+          рекомендацию.
+        </p>
+        {error && <div className="form-error">{error}</div>}
+        <button className="primary-button" onClick={onSubmit}>
+          Открыть профиль
+        </button>
+      </section>
+      <section className="profile-suggestions">
+        <small>Можно проверить на демо-профиле</small>
+        <div>
+          {creators.slice(0, 4).map((creator) => (
+            <button key={creator} onClick={() => onChange(creator)}>
+              {creator}
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ProfilePanel({
+  state,
+  creator,
+  onManage,
+  onAddContent,
+  onBookRecommendation,
+}: {
+  state: DemoState;
+  creator: string;
+  onManage: () => void;
+  onAddContent: () => void;
+  onBookRecommendation: (date: string, tourId: string) => void;
+}) {
+  const bookings = state.bookings
+    .filter(
+      (booking) =>
+        booking.status === "active" && booking.creator === creator,
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const content = state.content
+    .filter((item) => item.creator === creator)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const rankings = getRankings(state);
+  const rank = rankings.findIndex((row) => row.creator === creator) + 1;
+  const uniqueKeys = new Set(
+    bookings
+      .map((booking) => getTour(booking.tourId)?.uniqueKey)
+      .filter(Boolean),
+  );
+  const upcoming = bookings.find((booking) => booking.date >= DEMO_TODAY);
+  const availableRecommendation = Object.entries(SCHEDULE)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([date, tourIds]) => tourIds.map((tourId) => ({ date, tourId })))
+    .find(({ date, tourId }) => {
+      const tour = getTour(tourId);
+      const occupied = state.bookings.some(
+        (booking) =>
+          booking.status === "active" &&
+          booking.date === date &&
+          booking.tourId === tourId,
+      );
+      return (
+        date >= DEMO_TODAY &&
+        tour &&
+        !uniqueKeys.has(tour.uniqueKey) &&
+        !occupied
+      );
+    });
+  const missingTour = TOURS.find(
+    (tour) => !uniqueKeys.has(tour.uniqueKey),
+  );
+  const achievement =
+    uniqueKeys.size >= TOTAL_UNIQUE_TOURS || bookings.length >= 10
+      ? "Гуру"
+      : bookings.length >= 5 || content.length >= 3
+        ? "Достигатор"
+        : bookings.length >= 2 || content.length >= 1
+          ? "Продвинутый"
+          : "Новичок";
+
+  return (
+    <div className="profile-dashboard">
+      <section className="profile-hero">
+        <div className="profile-avatar">
+          <Icon name="user" size={42} />
+          <span />
+        </div>
+        <div className="profile-identity">
+          <small>Профиль сезона</small>
+          <strong>{creator}</strong>
+          <div className="achievement-row">
+            <span>{achievement}</span>
+            {rank === 1 && <span className="is-leader">Лидер сезона</span>}
+          </div>
+        </div>
+        <div className="profile-score">
+          <strong>{uniqueKeys.size}</strong>
+          <span>/ {TOTAL_UNIQUE_TOURS}</span>
+        </div>
+        <div className="profile-metrics">
+          <article>
+            <strong>{rank || "—"}</strong>
+            <span>место</span>
+          </article>
+          <article>
+            <strong>{bookings.length}</strong>
+            <span>поездок</span>
+          </article>
+          <article>
+            <strong>{content.length}</strong>
+            <span>материалов</span>
+          </article>
+        </div>
+      </section>
+
+      <div className="profile-grid">
+        <section className="profile-block profile-block--progress">
+          <small>Охват программ</small>
+          <strong>
+            {uniqueKeys.size} из {TOTAL_UNIQUE_TOURS} уникальных туров
+          </strong>
+          <div className="tour-stars">
+            {Array.from({ length: TOTAL_UNIQUE_TOURS }, (_, index) => (
+              <Icon
+                key={index}
+                name="star"
+                size={18}
+              />
+            )).map((star, index) => (
+              <span
+                key={index}
+                className={index < uniqueKeys.size ? "is-filled" : ""}
+              >
+                {star}
+              </span>
+            ))}
+          </div>
+          <p>
+            Две вечерние программы учитываются как одна уникальная категория.
+          </p>
+        </section>
+
+        <section className="profile-block profile-block--booking">
+          <small>Ближайшая бронь</small>
+          {upcoming ? (
+            <>
+              <strong>{formatDateRu(upcoming.date)} · 11:00</strong>
+              <p>{getTour(upcoming.tourId)?.name}</p>
+            </>
+          ) : (
+            <>
+              <strong>Будущих записей нет</strong>
+              <p>Выберите свободное окно в календаре.</p>
+            </>
+          )}
+        </section>
+
+        <section className="profile-block profile-block--recommendation">
+          <small>Следующий уникальный тур</small>
+          {availableRecommendation ? (
+            <>
+              <strong>
+                {getTour(availableRecommendation.tourId)?.name}
+              </strong>
+              <p>
+                Ближайшее свободное окно:{" "}
+                {formatDateRu(availableRecommendation.date)}.
+              </p>
+              <button
+                onClick={() =>
+                  onBookRecommendation(
+                    availableRecommendation.date,
+                    availableRecommendation.tourId,
+                  )
+                }
+              >
+                Записаться
+                <Icon name="arrow" />
+              </button>
+            </>
+          ) : missingTour ? (
+            <>
+              <strong>{missingTour.name}</strong>
+              <p>
+                Новых свободных дат пока нет — покажем ближайшую, как только она
+                появится в расписании.
+              </p>
+            </>
+          ) : (
+            <>
+              <strong>Все доступные категории пройдены</strong>
+              <p>Можно повторить любимый маршрут.</p>
+            </>
+          )}
+        </section>
+
+        <section className="profile-block profile-block--material">
+          <small>Последний материал</small>
+          {content[0] ? (
+            <>
+              <strong>{getTour(content[0].tourId)?.short}</strong>
+              <p>
+                {platformFromLink(content[0].link)} ·{" "}
+                {formatDateRu(content[0].date)}
+              </p>
+            </>
+          ) : (
+            <>
+              <strong>Публикаций пока нет</strong>
+              <p>Добавьте готовую работу после тура.</p>
+            </>
+          )}
+        </section>
+      </div>
+
+      <div className="profile-actions">
+        <button className="dark-button" onClick={onManage}>
+          <Icon name="calendar" />
+          Управлять бронью
+          <Icon name="arrow" />
+        </button>
+        <button className="light-button" onClick={onAddContent}>
+          <Icon name="plus" />
+          Добавить контент
+          <Icon name="arrow" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ContentPanel({
+  state,
+  creator,
+  tourId,
+  link,
+  error,
+  onCreator,
+  onTour,
+  onLink,
+  onSubmit,
+  onResults,
+}: {
+  state: DemoState;
+  creator: string;
+  tourId: string;
+  link: string;
+  error: string;
+  onCreator: (value: string) => void;
+  onTour: (value: string) => void;
+  onLink: (value: string) => void;
+  onSubmit: () => void;
+  onResults: () => void;
+}) {
+  const knownCreators = [
+    ...new Set(
+      state.bookings
+        .filter((booking) => booking.status === "active")
+        .map((booking) => booking.creator),
+    ),
+  ].sort();
+  const normalized = normalizeCreator(creator);
+  const creatorBookings = state.bookings.filter(
+    (booking) =>
+      booking.status === "active" && booking.creator === normalized,
+  );
+  const visitedTourIds = [
+    ...new Set(creatorBookings.map((booking) => booking.tourId)),
+  ];
+
+  return (
+    <div className="content-layout">
+      <section className="content-form">
+        <label className="field">
+          <span>Ник креатора из записи</span>
+          <input
+            list="creator-list"
+            value={creator}
+            onChange={(event) => onCreator(event.target.value)}
+            placeholder="@username"
+            autoCapitalize="none"
+          />
+          <datalist id="creator-list">
+            {knownCreators.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+        </label>
+        <label className="field">
+          <span>Название посещённого тура</span>
+          <select
+            value={tourId}
+            onChange={(event) => onTour(event.target.value)}
+          >
+            <option value="">Выберите тур</option>
+            {visitedTourIds.map((id) => (
+              <option key={id} value={id}>
+                {getTour(id)?.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Ссылка на готовый контент</span>
+          <div className="input-with-icon">
+            <Icon name="link" />
+            <input
+              value={link}
+              onChange={(event) => onLink(event.target.value)}
+              placeholder="https://..."
+              inputMode="url"
+            />
+          </div>
+        </label>
+        <div className="inline-note">
+          Дата поездки будет найдена автоматически по нику и выбранному туру.
+        </div>
+        {error && <div className="form-error">{error}</div>}
+        <button className="primary-button" onClick={onSubmit}>
+          Добавить готовый контент
+        </button>
+      </section>
+      <aside className="content-aside">
+        <div className="content-aside__plus">
+          <Icon name="plus" size={40} />
+        </div>
+        <small>Материалы мастерской</small>
+        <SplitTitle
+          strong={String(state.content.length)}
+          light="публикаций"
+          as="h3"
+        />
+        <p>
+          После добавления работа появится в итогах, ЛК и рейтинге контента.
+        </p>
+        <button onClick={onResults}>Смотреть все работы</button>
+      </aside>
+    </div>
+  );
+}
+
+function RatingPanel({
+  state,
+  mode,
+  onMode,
+}: {
+  state: DemoState;
+  mode: RatingMode;
+  onMode: (mode: RatingMode) => void;
+}) {
+  const rows = getRankings(state);
+  const sorted = [...rows].sort((a, b) => {
+    if (mode === "unique")
+      return b.unique - a.unique || b.visits - a.visits;
+    if (mode === "content")
+      return b.materials - a.materials || b.visits - a.visits;
+    return b.visits - a.visits || b.unique - a.unique;
+  });
+
+  return (
+    <div className="rating-layout">
+      <div className="segmented-control" aria-label="Вид рейтинга">
+        <button
+          className={mode === "visits" ? "is-active" : ""}
+          onClick={() => onMode("visits")}
+        >
+          Поездки
+        </button>
+        <button
+          className={mode === "unique" ? "is-active" : ""}
+          onClick={() => onMode("unique")}
+        >
+          Уникальные
+        </button>
+        <button
+          className={mode === "content" ? "is-active" : ""}
+          onClick={() => onMode("content")}
+        >
+          Контент
+        </button>
+      </div>
+      <p className="rating-explain">
+        Основное место определяется по количеству поездок. Уникальные маршруты
+        и материалы показываются дополнительными показателями.
+      </p>
+      <div className="ranking-list">
+        {sorted.map((row, index) => (
+          <article
+            key={row.creator}
+            className={index < 3 ? `is-top-${index + 1}` : ""}
+          >
+            <span className="ranking-place">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <div className="ranking-person">
+              <strong>{row.creator}</strong>
+              <span>
+                {row.unique} уникальных из {TOTAL_UNIQUE_TOURS}
+              </span>
+              <div className="ranking-stars">
+                {Array.from({ length: TOTAL_UNIQUE_TOURS }, (_, star) => (
+                  <Icon
+                    key={star}
+                    name="star"
+                    size={12}
+                  />
+                )).map((star, starIndex) => (
+                  <span
+                    key={starIndex}
+                    className={starIndex < row.unique ? "is-filled" : ""}
+                  >
+                    {star}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="ranking-score">
+              <strong>
+                {mode === "unique"
+                  ? row.unique
+                  : mode === "content"
+                    ? row.materials
+                    : row.visits}
+              </strong>
+              <span>
+                {mode === "unique"
+                  ? pluralRu(row.unique, "тур", "тура", "туров")
+                  : mode === "content"
+                    ? pluralRu(row.materials, "работа", "работы", "работ")
+                    : pluralRu(row.visits, "поездка", "поездки", "поездок")}
+              </span>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ResultsPanel({
+  state,
+  filter,
+  onFilter,
+  onStory,
+}: {
+  state: DemoState;
+  filter: string;
+  onFilter: (value: string) => void;
+  onStory: (item: ContentItem) => void;
+}) {
+  const creators = [...new Set(state.content.map((item) => item.creator))].sort();
+  const visible = filter
+    ? state.content.filter((item) => item.creator === filter)
+    : state.content;
+  const grouped = visible.reduce<Record<string, ContentItem[]>>((result, item) => {
+    result[item.creator] = [...(result[item.creator] ?? []), item];
+    return result;
+  }, {});
+
+  return (
+    <div className="results-layout">
+      <div className="results-tools">
+        <label className="field">
+          <span>Фильтр по креатору</span>
+          <select
+            value={filter}
+            onChange={(event) => onFilter(event.target.value)}
+          >
+            <option value="">Все креаторы</option>
+            {creators.map((creator) => (
+              <option key={creator} value={creator}>
+                {creator}
+              </option>
+            ))}
+          </select>
+        </label>
+        <strong>
+          {Object.keys(grouped).length}{" "}
+          {pluralRu(
+            Object.keys(grouped).length,
+            "креатор",
+            "креатора",
+            "креаторов",
+          )}{" "}
+          · {visible.length}{" "}
+          {pluralRu(visible.length, "материал", "материала", "материалов")}
+        </strong>
+      </div>
+      <div className="creator-groups">
+        {Object.entries(grouped)
+          .sort(([, a], [, b]) => b.length - a.length)
+          .map(([creator, items], groupIndex) => (
+            <section
+              key={creator}
+              className={`creator-group is-tone-${(groupIndex % 3) + 1}`}
+            >
+              <header>
+                <span>{String(groupIndex + 1).padStart(2, "0")}</span>
+                <strong>{creator}</strong>
+                <small>
+                  {items.length}{" "}
+                  {pluralRu(items.length, "работа", "работы", "работ")}
+                </small>
+              </header>
+              <div>
+                {items.map((item, index) => (
+                  <button key={item.id} onClick={() => onStory(item)}>
+                    <span>{String(index + 1).padStart(2, "0")}</span>
+                    <span>
+                      <small>{platformFromLink(item.link)}</small>
+                      <strong>{getTour(item.tourId)?.name}</strong>
+                    </span>
+                    <time>{formatDateRu(item.date)}</time>
+                    <Icon name="right" />
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+      </div>
+    </div>
+  );
+}
+
+function StoryPanel({
+  item,
+  onBack,
+}: {
+  item: ContentItem | null;
+  onBack: () => void;
+}) {
+  if (!item) return null;
+  const tour = getTour(item.tourId);
+  return (
+    <div className="story-layout">
+      <section className="story-visual">
+        <div className="story-visual__top">
+          <span>{platformFromLink(item.link)}</span>
+          <span>01 / 01</span>
+        </div>
+        <div className="story-visual__symbol">{tour?.emoji}</div>
+        <div className="story-visual__copy">
+          <strong>{item.creator}</strong>
+          <p>{tour?.name}</p>
+        </div>
+        <div className="story-visual__meta">
+          <span>{formatDateRu(item.date)}</span>
+          <span>Материал сезона</span>
+        </div>
+      </section>
+      <div className="story-actions">
+        <button className="secondary-button" onClick={onBack}>
+          <Icon name="left" />
+          Назад к итогам
+        </button>
+        <a href={item.link} target="_blank" rel="noreferrer">
+          Открыть публикацию
+          <Icon name="arrow" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function NoticesPanel({
+  state,
+  onReset,
+}: {
+  state: DemoState;
+  onReset: () => void;
+}) {
+  const rankings = getRankings(state);
+  const todayBookings = state.bookings.filter(
+    (booking) =>
+      booking.status === "active" &&
+      booking.createdAt.slice(0, 10) === "2026-07-23",
+  );
+  return (
+    <div className="notices-layout">
+      <section className="notice-card notice-card--daily">
+        <span className="notice-icon">
+          <Icon name="bell" />
+        </span>
+        <small>Ежедневная сводка</small>
+        <SplitTitle strong="Сегодня" light="в мастерской" as="h3" />
+        <ul>
+          <li>
+            <strong>Новые записи:</strong> {todayBookings.length}
+          </li>
+          <li>
+            <strong>Лидер сейчас:</strong> {rankings[0]?.creator}
+          </li>
+          <li>
+            <strong>Опубликовано:</strong> {state.content.length}{" "}
+            {pluralRu(
+              state.content.length,
+              "материал",
+              "материала",
+              "материалов",
+            )}
+          </li>
+        </ul>
+      </section>
+      <section className="notice-card notice-card--leader">
+        <span className="notice-icon">
+          <Icon name="star" />
+        </span>
+        <small>Событие дня</small>
+        <SplitTitle strong="Новый" light="лидер сезона" as="h3" />
+        <div className="leader-change">
+          <span>01</span>
+          <strong>{rankings[0]?.creator}</strong>
+          <small>
+            {rankings[0]?.visits}{" "}
+            {pluralRu(
+              rankings[0]?.visits ?? 0,
+              "поездка",
+              "поездки",
+              "поездок",
+            )}
+          </small>
+        </div>
+      </section>
+      <section className="test-settings">
+        <div>
+          <strong>Безопасный тестовый режим</strong>
+          <p>
+            Брони и публикации сохраняются только в этом браузере. Google-таблица
+            действующего сайта не используется.
+          </p>
+        </div>
+        <button onClick={onReset}>Сбросить демо-данные</button>
+      </section>
+    </div>
+  );
+}
+
+function Toast({ message }: { message: string }) {
+  return (
+    <div className={`toast${message ? " toast--visible" : ""}`} role="status">
+      <span>
+        <Icon name="check" size={18} />
+      </span>
+      {message}
+    </div>
+  );
+}
+
+export default function CreacloudApp() {
+  const [loading, setLoading] = useState(true);
+  const [entered, setEntered] = useState(false);
+  const [panel, setPanel] = useState<Panel>(null);
+  const [state, setState] = useState<DemoState>(() => cloneInitialState());
+  const [activeCreator, setActiveCreator] = useState("");
+  const [profileInput, setProfileInput] = useState("@evgivi");
+  const [profileError, setProfileError] = useState("");
+  const [bookingView, setBookingView] = useState<BookingView>("new");
+  const [selectedDate, setSelectedDate] = useState("2026-07-28");
+  const [selectedTour, setSelectedTour] = useState("");
+  const [transferSourceId, setTransferSourceId] = useState("");
+  const [contentCreator, setContentCreator] = useState("");
+  const [contentTour, setContentTour] = useState("");
+  const [contentLink, setContentLink] = useState("");
+  const [contentError, setContentError] = useState("");
+  const [ratingMode, setRatingMode] = useState<RatingMode>("visits");
+  const [resultsFilter, setResultsFilter] = useState("");
+  const [story, setStory] = useState<ContentItem | null>(null);
+  const [toast, setToast] = useState("");
+  const [toolbarHidden, setToolbarHidden] = useState(false);
+  const lastScroll = useRef(0);
+
+  const activeBookings = state.bookings.filter(
+    (booking) => booking.status === "active",
+  );
+  const knownCreators = useMemo(
+    () => [...new Set(activeBookings.map((booking) => booking.creator))].sort(),
+    [activeBookings],
+  );
+
+  function persist(next: DemoState) {
+    setState(next);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // The demo still works in-memory when storage is unavailable.
+    }
+  }
+
+  function notify(message: string) {
+    setToast(message);
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setLoading(false), 1050);
+    let storageTimer: number | undefined;
+    try {
+      const saved = window.localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as DemoState;
+        storageTimer = window.setTimeout(() => setState(parsed), 0);
+      }
+    } catch {
+      // Keep the seeded state.
+    }
+    return () => {
+      window.clearTimeout(timer);
+      if (storageTimer !== undefined) window.clearTimeout(storageTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), 3200);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPanel(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  useEffect(() => {
+    const onScroll = () => {
+      const current = Math.max(0, window.scrollY);
+      const delta = current - lastScroll.current;
+      if (current < 80 || delta < -4) setToolbarHidden(false);
+      if (current > 140 && delta > 4) setToolbarHidden(true);
+      lastScroll.current = current;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  function closePanel() {
+    setPanel(null);
+    setToolbarHidden(false);
+  }
+
+  function openBooking(view: BookingView = "new") {
+    setBookingView(view);
+    if (!activeCreator && view !== "new") setActiveCreator(profileInput);
+    setPanel("booking");
+  }
+
+  function openProfile() {
+    setProfileError("");
+    if (activeCreator) setProfileInput(activeCreator);
+    setPanel("profile-login");
+  }
+
+  function submitProfile() {
+    const normalized = normalizeCreator(profileInput);
+    if (!normalized || !knownCreators.includes(normalized)) {
+      setProfileError(
+        "ЛК открывается после первого бронирования. Пока этот ник не найден в базе.",
+      );
+      return;
+    }
+    setActiveCreator(normalized);
+    setContentCreator(normalized);
+    setProfileError("");
+    setPanel("profile");
+  }
+
+  function submitBooking() {
+    const creator = normalizeCreator(activeCreator);
+    if (!creator) {
+      notify("Введите ник креатора.");
+      return;
+    }
+    if (!selectedDate || !selectedTour) {
+      notify("Выберите дату и свободный тур.");
+      return;
+    }
+    const conflict = state.bookings.some(
+      (booking) =>
+        booking.status === "active" &&
+        booking.date === selectedDate &&
+        booking.tourId === selectedTour &&
+        booking.id !== transferSourceId,
+    );
+    if (conflict) {
+      notify("Это окно уже занято. Выберите другой тур.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const nextBooking: Booking = {
+      id: `demo-${Date.now()}`,
+      creator,
+      date: selectedDate,
+      tourId: selectedTour,
+      status: "active",
+      createdAt: now,
+    };
+    let nextBookings = [...state.bookings];
+    if (bookingView === "transfer") {
+      if (!transferSourceId) {
+        notify("Выберите бронь для переноса.");
+        return;
+      }
+      nextBookings = nextBookings.map((booking) =>
+        booking.id === transferSourceId
+          ? { ...booking, status: "cancelled" as const }
+          : booking,
+      );
+    }
+    nextBookings.push(nextBooking);
+    persist({ ...state, bookings: nextBookings });
+    setActiveCreator(creator);
+    setProfileInput(creator);
+    setSelectedTour("");
+    setTransferSourceId("");
+    setBookingView("manage");
+    notify(
+      bookingView === "transfer"
+        ? "Тестовая бронь перенесена."
+        : "Тестовая бронь создана.",
+    );
+  }
+
+  function cancelBooking(bookingId: string) {
+    persist({
+      ...state,
+      bookings: state.bookings.map((booking) =>
+        booking.id === bookingId
+          ? { ...booking, status: "cancelled" as const }
+          : booking,
+      ),
+    });
+    notify("Тестовая бронь отменена, место снова свободно.");
+  }
+
+  function openContent(creator = activeCreator) {
+    setContentCreator(creator);
+    setContentTour("");
+    setContentLink("");
+    setContentError("");
+    setPanel("content");
+  }
+
+  function submitContent() {
+    const creator = normalizeCreator(contentCreator);
+    const booking = state.bookings
+      .filter(
+        (item) =>
+          item.status === "active" &&
+          item.creator === creator &&
+          item.tourId === contentTour,
+      )
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    if (!creator || !knownCreators.includes(creator)) {
+      setContentError("Выберите ник, который уже записывался на тур.");
+      return;
+    }
+    if (!contentTour || !booking) {
+      setContentError("Выберите посещённый тур этого креатора.");
+      return;
+    }
+    try {
+      const url = new URL(contentLink);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+    } catch {
+      setContentError("Укажите корректную прямую ссылку на публикацию.");
+      return;
+    }
+    if (state.content.some((item) => item.link === contentLink.trim())) {
+      setContentError("Такая ссылка уже добавлена.");
+      return;
+    }
+    const item: ContentItem = {
+      id: `content-${Date.now()}`,
+      creator,
+      date: booking.date,
+      tourId: contentTour,
+      link: contentLink.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    persist({ ...state, content: [item, ...state.content] });
+    setActiveCreator(creator);
+    setProfileInput(creator);
+    setContentTour("");
+    setContentLink("");
+    setContentError("");
+    notify("Контент добавлен и связан с тестовой записью.");
+  }
+
+  function resetDemo() {
+    const next = cloneInitialState();
+    persist(next);
+    setActiveCreator("");
+    setProfileInput("@evgivi");
+    setPanel(null);
+    notify("Демо-данные восстановлены.");
+  }
+
+  function renderPanel() {
+    if (!panel) return null;
+    if (panel === "booking") {
+      return (
+        <ModalShell
+          strong={bookingView === "manage" ? "Мои" : "Выбрать"}
+          light={bookingView === "manage" ? "брони" : "тур"}
+          kicker={
+            bookingView === "manage"
+              ? "Управление текущими записями"
+              : bookingView === "transfer"
+                ? "Перенос бронирования"
+                : "Календарь и бронирование"
+          }
+          onClose={closePanel}
+          className="modal--booking"
+        >
+          <BookingPanel
+            state={state}
+            view={bookingView}
+            activeCreator={activeCreator}
+            selectedDate={selectedDate}
+            selectedTour={selectedTour}
+            transferSourceId={transferSourceId}
+            onView={setBookingView}
+            onDate={setSelectedDate}
+            onTour={setSelectedTour}
+            onCreator={setActiveCreator}
+            onTransferSource={setTransferSourceId}
+            onSubmit={submitBooking}
+            onCancelBooking={cancelBooking}
+          />
+        </ModalShell>
+      );
+    }
+    if (panel === "profile-login") {
+      return (
+        <ModalShell
+          strong="ЛК"
+          light="креатора"
+          kicker="Вход по нику из базы"
+          onClose={closePanel}
+          className="modal--profile-login"
+        >
+          <ProfileLogin
+            creators={knownCreators}
+            value={profileInput}
+            error={profileError}
+            onChange={setProfileInput}
+            onSubmit={submitProfile}
+          />
+        </ModalShell>
+      );
+    }
+    if (panel === "profile") {
+      return (
+        <ModalShell
+          strong="ЛК"
+          light="креатора"
+          kicker="Персональный профиль"
+          onClose={closePanel}
+          className="modal--profile"
+        >
+          <ProfilePanel
+            state={state}
+            creator={activeCreator}
+            onManage={() => {
+              setBookingView("manage");
+              setPanel("booking");
+            }}
+            onAddContent={() => openContent(activeCreator)}
+            onBookRecommendation={(date, tourId) => {
+              setSelectedDate(date);
+              setSelectedTour(tourId);
+              setBookingView("new");
+              setPanel("booking");
+            }}
+          />
+        </ModalShell>
+      );
+    }
+    if (panel === "content") {
+      return (
+        <ModalShell
+          strong="Добавить"
+          light="контент"
+          kicker="Готовый материал после тура"
+          onClose={closePanel}
+          className="modal--content"
+        >
+          <ContentPanel
+            state={state}
+            creator={contentCreator}
+            tourId={contentTour}
+            link={contentLink}
+            error={contentError}
+            onCreator={setContentCreator}
+            onTour={setContentTour}
+            onLink={setContentLink}
+            onSubmit={submitContent}
+            onResults={() => setPanel("results")}
+          />
+        </ModalShell>
+      );
+    }
+    if (panel === "rating") {
+      return (
+        <ModalShell
+          strong="Рейтинг"
+          light="креаторов"
+          kicker="Статистика сезона"
+          onClose={closePanel}
+          className="modal--rating"
+        >
+          <RatingPanel
+            state={state}
+            mode={ratingMode}
+            onMode={setRatingMode}
+          />
+        </ModalShell>
+      );
+    }
+    if (panel === "results") {
+      return (
+        <ModalShell
+          strong="Смотреть"
+          light="результаты"
+          kicker="Итоги морских туров"
+          onClose={closePanel}
+          className="modal--results"
+        >
+          <ResultsPanel
+            state={state}
+            filter={resultsFilter}
+            onFilter={setResultsFilter}
+            onStory={(item) => {
+              setStory(item);
+              setPanel("story");
+            }}
+          />
+        </ModalShell>
+      );
+    }
+    if (panel === "story") {
+      return (
+        <ModalShell
+          strong="История"
+          light="креатора"
+          kicker="Материал мастерской"
+          onClose={closePanel}
+          className="modal--story"
+        >
+          <StoryPanel item={story} onBack={() => setPanel("results")} />
+        </ModalShell>
+      );
+    }
+    return (
+      <ModalShell
+        strong="Сводка"
+        light="мастерской"
+        kicker="События и тестовый режим"
+        onClose={closePanel}
+        className="modal--notices"
+      >
+        <NoticesPanel state={state} onReset={resetDemo} />
+      </ModalShell>
+    );
+  }
+
+  return (
+    <>
+      <Splash hidden={!loading} />
+      {!loading && !entered ? (
+        <Welcome onEnter={() => setEntered(true)} />
+      ) : (
+        <div className="site-shell">
+          <div
+            className={
+              panel ? "site-shell__surface is-dimmed" : "site-shell__surface"
+            }
+          >
+            <Dashboard
+              state={state}
+              onOpen={(next) => {
+                if (next === "booking") openBooking("new");
+                else setPanel(next);
+              }}
+              onTestInfo={() => setPanel("notices")}
+            />
+            <Toolbar
+              active={panel}
+              hidden={toolbarHidden}
+              onBooking={() => openBooking("new")}
+              onProfile={openProfile}
+              onContent={() => openContent()}
+            />
+          </div>
+          {renderPanel()}
+        </div>
+      )}
+      <Toast message={toast} />
+    </>
+  );
+}
