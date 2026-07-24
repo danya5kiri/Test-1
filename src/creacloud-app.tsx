@@ -51,9 +51,9 @@ type BookingView = "new" | "manage" | "transfer";
 type RatingMode = "visits" | "unique" | "content";
 type DataStatus = "loading" | "live" | "cached" | "error";
 
-const CACHE_KEY = "creacloud-test-1-working-cache-v2";
-const RECENT_WRITES_KEY = "creacloud-test-1-recent-writes-v2";
-const TEAM_DAILY_NOTICE_KEY = "creacloud-test-1-team-daily-notice-v1";
+const CACHE_KEY = "creacloud-portal-working-cache-v3";
+const RECENT_WRITES_KEY = "creacloud-portal-recent-writes-v3";
+const TEAM_DAILY_NOTICE_KEY = "creacloud-portal-team-daily-notice-v2";
 const RECENT_WRITE_TTL = 15 * 60 * 1000;
 
 function emptyWorkingState(): WorkingState {
@@ -228,10 +228,102 @@ function SplitTitle({
 }
 
 function Splash({ hidden }: { hidden: boolean }) {
+  const phrases = useMemo(
+    () => [
+      "собираем креаторов",
+      "вдохновляем креаторов",
+      "респектуем креаторам",
+    ],
+    [],
+  );
+  const [phraseIndex, setPhraseIndex] = useState(0);
+  const [visibleChars, setVisibleChars] = useState(0);
+  const [erasing, setErasing] = useState(false);
+  const phrase = phrases[phraseIndex];
+
+  useEffect(() => {
+    const isComplete = visibleChars >= phrase.length;
+    const isEmpty = visibleChars <= 0;
+    const delay = erasing ? 38 : isComplete ? 620 : 64;
+    const timer = window.setTimeout(() => {
+      if (!erasing && isComplete) {
+        setErasing(true);
+        return;
+      }
+      if (erasing && isEmpty) {
+        setErasing(false);
+        setPhraseIndex((current) => (current + 1) % phrases.length);
+        return;
+      }
+      setVisibleChars((current) => current + (erasing ? -1 : 1));
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [erasing, phrase.length, phrases.length, visibleChars]);
+
   return (
     <div className={`splash${hidden ? " splash--hidden" : ""}`} aria-hidden={hidden}>
-      <span className="splash__pulse" aria-hidden="true" />
-      <p className="splash__phrase">CREACLOUD</p>
+      <div className="splash__stage">
+        <div className="splash__logo" aria-label="CREACLOUD">
+          <strong>CREA</strong>
+          <span>CLOUD</span>
+        </div>
+        <div className="splash__typing">
+          <span className="splash__pulse" aria-hidden="true" />
+          <p>{phrase.slice(0, visibleChars)}</p>
+          <span className="splash__caret" aria-hidden="true" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type InteractionAura = {
+  id: number;
+  x: number;
+  y: number;
+};
+
+function InteractionAuras() {
+  const [auras, setAuras] = useState<InteractionAura[]>([]);
+  const nextId = useRef(0);
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const control = target.closest(
+        "button:not(:disabled), a[href], [role='button']:not([aria-disabled='true'])",
+      );
+      if (!control) return;
+
+      const id = nextId.current++;
+      setAuras((current) => [
+        ...current.slice(-5),
+        { id, x: event.clientX, y: event.clientY },
+      ]);
+      window.setTimeout(() => {
+        setAuras((current) => current.filter((aura) => aura.id !== id));
+      }, 900);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, {
+      capture: true,
+      passive: true,
+    });
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, []);
+
+  return (
+    <div className="interaction-auras" aria-hidden="true">
+      {auras.map((aura) => (
+        <span
+          key={aura.id}
+          className="interaction-aura"
+          style={{ left: aura.x, top: aura.y }}
+        />
+      ))}
     </div>
   );
 }
@@ -397,6 +489,7 @@ function Dashboard({
   const rankings = getRankings(state);
   const leaderSlides = [
     {
+      tone: "visits",
       label: "Лидер по поездкам",
       row: [...rankings].sort(
         (a, b) =>
@@ -408,6 +501,7 @@ function Dashboard({
         `${row.visits} ${pluralRu(row.visits, "поездка", "поездки", "поездок")}`,
     },
     {
+      tone: "unique",
       label: "Лидер по уникальным турам",
       row: [...rankings].sort(
         (a, b) =>
@@ -419,6 +513,7 @@ function Dashboard({
         `${row.unique} ${pluralRu(row.unique, "тур", "тура", "туров")} из ${TOTAL_UNIQUE_TOURS}`,
     },
     {
+      tone: "content",
       label: "Лидер по контенту",
       row: [...rankings].sort(
         (a, b) =>
@@ -430,8 +525,19 @@ function Dashboard({
         `${row.materials} ${pluralRu(row.materials, "работа", "работы", "работ")}`,
     },
   ];
-  const [leaderSlide, setLeaderSlide] = useState(0);
-  const currentLeader = leaderSlides[leaderSlide];
+  const loopedLeaderSlides = [
+    leaderSlides[leaderSlides.length - 1],
+    ...leaderSlides,
+    leaderSlides[0],
+  ];
+  const [leaderSlide, setLeaderSlide] = useState(1);
+  const [carouselAnimated, setCarouselAnimated] = useState(true);
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
+  const dragDelta = useRef({ x: 0, y: 0 });
+  const slideWasSwiped = useRef(false);
+  const visibleLeaderSlide =
+    ((leaderSlide - 1) % leaderSlides.length + leaderSlides.length) %
+    leaderSlides.length;
   const activeBookings = state.bookings.filter(
     (booking) => booking.status === "active",
   );
@@ -439,10 +545,53 @@ function Dashboard({
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setLeaderSlide((current) => (current + 1) % leaderSlides.length);
+      setLeaderSlide((current) => current + 1);
     }, 5000);
     return () => window.clearInterval(timer);
   }, [leaderSlides.length]);
+
+  function finishCarouselTransition() {
+    if (leaderSlide !== 0 && leaderSlide !== leaderSlides.length + 1) return;
+    const resetTo = leaderSlide === 0 ? leaderSlides.length : 1;
+    setCarouselAnimated(false);
+    setLeaderSlide(resetTo);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => setCarouselAnimated(true));
+    });
+  }
+
+  function beginLeaderSwipe(event: React.PointerEvent<HTMLElement>) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    dragStart.current = { x: event.clientX, y: event.clientY };
+    dragDelta.current = { x: 0, y: 0 };
+    slideWasSwiped.current = false;
+  }
+
+  function moveLeaderSwipe(event: React.PointerEvent<HTMLElement>) {
+    if (!dragStart.current) return;
+    dragDelta.current = {
+      x: event.clientX - dragStart.current.x,
+      y: event.clientY - dragStart.current.y,
+    };
+    if (
+      Math.abs(dragDelta.current.x) >= 42 &&
+      Math.abs(dragDelta.current.x) > Math.abs(dragDelta.current.y)
+    ) {
+      slideWasSwiped.current = true;
+    }
+  }
+
+  function endLeaderSwipe(event: React.PointerEvent<HTMLElement>) {
+    if (!dragStart.current) return;
+    moveLeaderSwipe(event);
+    const { x: deltaX } = dragDelta.current;
+    dragStart.current = null;
+    if (!slideWasSwiped.current) return;
+    setLeaderSlide((current) => current + (deltaX < 0 ? 1 : -1));
+    window.setTimeout(() => {
+      slideWasSwiped.current = false;
+    }, 120);
+  }
 
   return (
     <main className="dashboard">
@@ -489,44 +638,78 @@ function Dashboard({
           </div>
         </article>
 
-        <button className="tile tile--rating" onClick={() => onOpen("rating")}>
-          <div>
-            <SplitTitle strong="Рейтинг" light="креаторов" as="h2" />
-            {currentLeader.row ? (
-              <p className="leader-highlight">
-                <strong className="leader-nick">
-                  {currentLeader.row.creator}
-                </strong>
-                <span>{currentLeader.value(currentLeader.row)}</span>
-              </p>
-            ) : (
-              <p>Рейтинг формируется</p>
-            )}
-            <div className="leader-carousel-meta">
-              <span>{currentLeader.label}</span>
-              <span>
-                {String(leaderSlide + 1).padStart(2, "0")} /{" "}
-                {String(leaderSlides.length).padStart(2, "0")}
-              </span>
-            </div>
+        <section
+          className="tile tile--rating rating-carousel"
+          aria-label="Лидеры CREACLOUD"
+          onPointerDown={beginLeaderSwipe}
+          onPointerMove={moveLeaderSwipe}
+          onPointerUp={endLeaderSwipe}
+          onPointerCancel={() => {
+            dragStart.current = null;
+            dragDelta.current = { x: 0, y: 0 };
+            slideWasSwiped.current = false;
+          }}
+        >
+          <div
+            className={`rating-carousel__track${
+              carouselAnimated ? "" : " is-jumping"
+            }`}
+            style={{ transform: `translateX(-${leaderSlide * 100}%)` }}
+            onTransitionEnd={finishCarouselTransition}
+          >
+            {loopedLeaderSlides.map((slide, index) => {
+              const logicalIndex =
+                ((index - 1) % leaderSlides.length + leaderSlides.length) %
+                leaderSlides.length;
+              return (
+                <button
+                  key={`${slide.label}-${index}`}
+                  className={`rating-slide rating-slide--${slide.tone}`}
+                  onClick={(event) => {
+                    if (slideWasSwiped.current) {
+                      event.preventDefault();
+                      return;
+                    }
+                    onOpen("rating");
+                  }}
+                >
+                  <div>
+                    <SplitTitle strong="Рейтинг" light="креаторов" as="h2" />
+                    {slide.row ? (
+                      <p className="leader-highlight">
+                        <small>{slide.label}</small>
+                        <strong className="leader-nick">
+                          {slide.row.creator}
+                        </strong>
+                        <span>{slide.value(slide.row)}</span>
+                      </p>
+                    ) : (
+                      <p>Рейтинг формируется</p>
+                    )}
+                  </div>
+                  <span className="top-badge">ТОП · {logicalIndex + 1}</span>
+                  <div className="podium" aria-hidden="true">
+                    <span />
+                    <span>
+                      <Icon name="star" />
+                    </span>
+                    <span />
+                  </div>
+                </button>
+              );
+            })}
           </div>
-          <span className="top-badge">ТОП · {leaderSlide + 1}</span>
-          <div className="podium" aria-hidden="true">
-            <span />
-            <span>
-              <Icon name="star" />
-            </span>
-            <span />
-          </div>
-          <div className="leader-dots" aria-hidden="true">
+          <div className="leader-dots" aria-label="Переключить показатель">
             {leaderSlides.map((slide, index) => (
-              <span
+              <button
                 key={slide.label}
-                className={index === leaderSlide ? "is-active" : ""}
+                className={index === visibleLeaderSlide ? "is-active" : ""}
+                aria-label={slide.label}
+                onClick={() => setLeaderSlide(index + 1)}
               />
             ))}
           </div>
-        </button>
+        </section>
 
         <button
           className="tile tile--metric"
@@ -599,7 +782,7 @@ function ModalShell({
         </header>
         <div className="demo-mode-note">
           <span />
-          Рабочая база · действия общие с основным сайтом
+          CREACLOUD · данные синхронизированы
         </div>
         <div className="modal__body">{children}</div>
       </section>
@@ -1377,54 +1560,92 @@ function RatingPanel({
         и материалы показываются дополнительными показателями.
       </p>
       <div className="ranking-list">
-        {sorted.map((row, index) => (
-          <article
-            key={row.creator}
-            className={index < 3 ? `is-top-${index + 1}` : ""}
-          >
-            <span className="ranking-place">
-              {String(index + 1).padStart(2, "0")}
-            </span>
-            <div className="ranking-person">
-              <strong>{row.creator}</strong>
-              <span>
-                {row.unique} уникальных из {TOTAL_UNIQUE_TOURS}
-              </span>
-              <div className="ranking-stars">
-                {Array.from({ length: TOTAL_UNIQUE_TOURS }, (_, star) => (
-                  <Icon
-                    key={star}
-                    name="star"
-                    size={12}
-                  />
-                )).map((star, starIndex) => (
-                  <span
-                    key={starIndex}
-                    className={starIndex < row.unique ? "is-filled" : ""}
-                  >
-                    {star}
-                  </span>
-                ))}
+        {sorted.map((row, index) => {
+          const score =
+            mode === "unique"
+              ? row.unique
+              : mode === "content"
+                ? row.materials
+                : row.visits;
+          const scoreLabel =
+            mode === "unique"
+              ? pluralRu(row.unique, "тур", "тура", "туров")
+              : mode === "content"
+                ? pluralRu(row.materials, "работа", "работы", "работ")
+                : pluralRu(row.visits, "поездка", "поездки", "поездок");
+          const achievement =
+            index === 0
+              ? mode === "unique"
+                ? "Лидер по уникальным турам"
+                : mode === "content"
+                  ? "Лидер по контенту"
+                  : "Лидер по поездкам"
+              : row.unique >= TOTAL_UNIQUE_TOURS
+                ? "Все маршруты сезона"
+                : row.materials >= 5
+                  ? "Автор сезона"
+                  : row.visits >= 3
+                    ? "Постоянный участник"
+                    : "Вклад в CREACLOUD";
+
+          return (
+            <article
+              key={row.creator}
+              className={index < 3 ? `is-top-${index + 1}` : ""}
+            >
+              <header className="ranking-card__head">
+                <span className="ranking-place">
+                  #{String(index + 1).padStart(2, "0")}
+                </span>
+                <span className="ranking-achievement">{achievement}</span>
+                <span className="ranking-score">
+                  <strong>{score}</strong>
+                  <small>{scoreLabel}</small>
+                </span>
+              </header>
+              <div className="ranking-person">
+                <small>Креатор</small>
+                <strong>{row.creator}</strong>
               </div>
-            </div>
-            <div className="ranking-score">
-              <strong>
-                {mode === "unique"
-                  ? row.unique
-                  : mode === "content"
-                    ? row.materials
-                    : row.visits}
-              </strong>
-              <span>
-                {mode === "unique"
-                  ? pluralRu(row.unique, "тур", "тура", "туров")
-                  : mode === "content"
-                    ? pluralRu(row.materials, "работа", "работы", "работ")
-                    : pluralRu(row.visits, "поездка", "поездки", "поездок")}
-              </span>
-            </div>
-          </article>
-        ))}
+              <div className="ranking-metrics">
+                <span>
+                  <strong>{row.visits}</strong>
+                  {pluralRu(row.visits, "поездка", "поездки", "поездок")}
+                </span>
+                <span>
+                  <strong>{row.unique}</strong>
+                  уникальных из {TOTAL_UNIQUE_TOURS}
+                </span>
+                <span>
+                  <strong>{row.materials}</strong>
+                  {pluralRu(row.materials, "работа", "работы", "работ")}
+                </span>
+              </div>
+              <div className="ranking-progress">
+                <div className="ranking-stars" aria-label="Уникальные туры">
+                  {Array.from({ length: TOTAL_UNIQUE_TOURS }, (_, starIndex) => (
+                    <span
+                      key={starIndex}
+                      className={starIndex < row.unique ? "is-filled" : ""}
+                    >
+                      <Icon name="star" size={13} />
+                    </span>
+                  ))}
+                </div>
+                <span>
+                  {row.unique}{" "}
+                  {pluralRu(
+                    row.unique,
+                    "уникальный тур",
+                    "уникальных тура",
+                    "уникальных туров",
+                  )}{" "}
+                  из {TOTAL_UNIQUE_TOURS}
+                </span>
+              </div>
+            </article>
+          );
+        })}
       </div>
     </div>
   );
@@ -1667,7 +1888,7 @@ function NoticesPanel({
           </small>
         </div>
       </section>
-      <section className="test-settings">
+      <section className="sync-status">
         <div>
           <strong>
             {dataStatus === "live"
@@ -1677,8 +1898,8 @@ function NoticesPanel({
                 : "Проверяем подключение"}
           </strong>
           <p>
-            Бронирования, переносы, отмены и публикации в Test-1 записываются в
-            ту же базу, что и на основном сайте.
+            Бронирования, переносы, отмены и публикации синхронизируются с общей
+            базой CREACLOUD.
             {lastSynced ? ` Последняя синхронизация: ${lastSynced}.` : ""}
           </p>
         </div>
@@ -1801,14 +2022,16 @@ export default function CreacloudApp() {
           Array.isArray(parsed.state.bookings) &&
           Array.isArray(parsed.state.content)
         ) {
-          setState(parsed.state);
-          setDataStatus("cached");
-          if (parsed.savedAt) {
-            const cachedAt = new Date(parsed.savedAt);
-            if (!Number.isNaN(cachedAt.getTime())) {
+          const cachedState = parsed.state;
+          const cachedAt = parsed.savedAt ? new Date(parsed.savedAt) : null;
+          window.queueMicrotask(() => {
+            if (cancelled) return;
+            setState(cachedState);
+            setDataStatus("cached");
+            if (cachedAt && !Number.isNaN(cachedAt.getTime())) {
               setLastSynced(syncLabel(cachedAt));
             }
-          }
+          });
         }
       }
     } catch {
@@ -2469,6 +2692,7 @@ export default function CreacloudApp() {
         </div>
       )}
       <Toast message={toast} />
+      <InteractionAuras />
     </>
   );
 }
