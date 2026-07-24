@@ -1,3 +1,5 @@
+import { SCHEDULE, SEASON_MONTHS } from "./creacloud-schedule";
+
 export type Tour = {
   id: string;
   name: string;
@@ -8,10 +10,12 @@ export type Tour = {
 
 export type Booking = {
   id: string;
+  sourceKey: string;
   creator: string;
   date: string;
   tourId: string;
-  status: "active" | "cancelled";
+  tourName: string;
+  status: "active";
   createdAt: string;
 };
 
@@ -20,19 +24,28 @@ export type ContentItem = {
   creator: string;
   date: string;
   tourId: string;
+  tourName: string;
   link: string;
   createdAt: string;
 };
 
-export type DemoState = {
+export type WorkingState = {
   bookings: Booking[];
   content: ContentItem[];
 };
 
-export const DEMO_TODAY = "2026-07-24";
+export type RemoteRow = Record<string, unknown>;
+
+export const API_URL =
+  "https://script.google.com/macros/s/AKfycbyRUzCwCTkj4TzURMsYfCZGVRrZnxoeoqTzz76w3n9qz-JlU4ji2i3e1xYQr4CymGsf8Q/exec";
+export const WHATSAPP_NUMBER = "79149753285";
+export const CALL_PHONE_NUMBER = "79149753285";
 export const SEASON_START = "2026-04-01";
+export const BOOKING_START = "2026-07-22";
 export const SEASON_END = "2026-10-20";
 export const TOTAL_UNIQUE_TOURS = 8;
+
+export { SCHEDULE, SEASON_MONTHS };
 
 export const TOURS: Tour[] = [
   {
@@ -100,128 +113,462 @@ export const TOURS: Tour[] = [
   },
 ];
 
-export const SCHEDULE: Record<string, string[]> = {
-  "2026-07-24": ["saxophone", "captain", "fishing"],
-  "2026-07-25": ["saxophone", "captain", "shkota"],
-  "2026-07-26": ["saxophone", "captain"],
-  "2026-07-27": ["saxophone", "captain", "shkota"],
-  "2026-07-28": ["saxophone", "captain", "fishing", "ricorda"],
-  "2026-07-29": ["saxophone", "captain", "askold", "shkota"],
-  "2026-07-30": ["barbecue", "saxophone", "captain", "archipelago"],
-  "2026-07-31": ["saxophone", "captain", "fishing", "ricorda"],
-  "2026-08-01": ["saxophone", "captain", "shkota"],
-  "2026-08-02": ["barbecue", "saxophone", "captain"],
-  "2026-08-03": ["saxophone", "captain", "ricorda"],
-  "2026-08-04": ["saxophone"],
-  "2026-08-05": ["saxophone", "captain", "ricorda"],
-  "2026-08-06": ["barbecue", "saxophone", "captain", "archipelago"],
-  "2026-08-07": ["saxophone", "captain", "askold"],
-  "2026-08-08": ["saxophone", "captain", "shkota"],
-  "2026-08-09": ["saxophone", "captain", "askold", "ricorda"],
-  "2026-08-10": ["saxophone", "captain", "fishing", "ricorda"],
-  "2026-08-11": ["saxophone", "captain"],
-  "2026-08-12": ["barbecue", "saxophone", "captain", "archipelago"],
+const CREATOR_ALIASES: Record<string, string> = {
+  "@a4anaseva": "@a4fanaseva",
 };
 
-const booking = (
-  id: string,
-  creator: string,
-  date: string,
-  tourId: string,
-  createdAt: string,
-): Booking => ({
-  id,
-  creator,
-  date,
-  tourId,
-  status: "active",
-  createdAt,
-});
+const DELETED_CREATORS = new Set(["@ник", "@тест", "@nik", "@test"]);
 
-export const INITIAL_DEMO_STATE: DemoState = {
-  bookings: [
-    booking("b01", "@evgivi", "2026-04-18", "archipelago", "2026-04-10T04:00:00Z"),
-    booking("b02", "@evgivi", "2026-04-26", "shkota", "2026-04-19T05:10:00Z"),
-    booking("b03", "@evgivi", "2026-05-10", "askold", "2026-05-02T08:00:00Z"),
-    booking("b04", "@evgivi", "2026-05-23", "ricorda", "2026-05-15T07:30:00Z"),
-    booking("b05", "@evgivi", "2026-06-05", "saxophone", "2026-05-27T06:00:00Z"),
-    booking("b06", "@evgivi", "2026-06-26", "barbecue", "2026-06-18T03:45:00Z"),
-    booking("b07", "@evgivi", "2026-07-08", "fishing", "2026-06-30T09:20:00Z"),
-    booking("b08", "@evgivi", "2026-07-28", "ricorda", "2026-07-23T06:25:00Z"),
-    booking("b09", "@mishka", "2026-04-19", "fishing", "2026-04-11T08:00:00Z"),
-    booking("b10", "@mishka", "2026-05-03", "archipelago", "2026-04-25T03:00:00Z"),
-    booking("b11", "@mishka", "2026-05-17", "shkota", "2026-05-10T04:00:00Z"),
-    booking("b12", "@mishka", "2026-06-07", "ricorda", "2026-05-29T06:00:00Z"),
-    booking("b13", "@mishka", "2026-06-20", "askold", "2026-06-12T06:00:00Z"),
-    booking("b14", "@mishka", "2026-07-05", "barbecue", "2026-06-27T04:00:00Z"),
-    booking("b15", "@mishka", "2026-08-01", "shkota", "2026-07-23T10:10:00Z"),
-    booking("b16", "@lera.photo", "2026-04-20", "saxophone", "2026-04-13T04:00:00Z"),
-    booking("b17", "@lera.photo", "2026-05-02", "askold", "2026-04-24T04:00:00Z"),
-    booking("b18", "@lera.photo", "2026-05-24", "archipelago", "2026-05-17T04:00:00Z"),
-    booking("b19", "@lera.photo", "2026-06-03", "shkota", "2026-05-25T04:00:00Z"),
-    booking("b20", "@lera.photo", "2026-06-28", "ricorda", "2026-06-20T04:00:00Z"),
-    booking("b21", "@lera.photo", "2026-08-02", "saxophone", "2026-07-23T11:10:00Z"),
-    booking("b22", "@danya5kiri", "2026-05-11", "fishing", "2026-05-03T04:00:00Z"),
-    booking("b23", "@danya5kiri", "2026-06-12", "archipelago", "2026-06-04T04:00:00Z"),
-    booking("b24", "@danya5kiri", "2026-07-10", "askold", "2026-07-02T04:00:00Z"),
-    booking("b25", "@danya5kiri", "2026-07-30", "barbecue", "2026-07-23T12:00:00Z"),
-    booking("b26", "@a4fashion", "2026-05-14", "russkiy", "2026-05-06T04:00:00Z"),
-    booking("b27", "@a4fashion", "2026-06-24", "ricorda", "2026-06-16T04:00:00Z"),
-    booking("b28", "@a4fashion", "2026-07-29", "askold", "2026-07-23T13:00:00Z"),
-    booking("b29", "@makar", "2026-06-15", "shkota", "2026-06-07T04:00:00Z"),
-    booking("b30", "@makar", "2026-08-06", "archipelago", "2026-07-23T14:00:00Z"),
-  ],
-  content: [
-    {
-      id: "c01",
-      creator: "@evgivi",
-      date: "2026-07-08",
-      tourId: "fishing",
-      link: "https://example.com/evgivi-fishing",
-      createdAt: "2026-07-09T05:00:00Z",
+const KNOWN_BOOKING_TRANSFERS = [
+  {
+    from: {
+      date: "2026-07-23",
+      telegram: "@a4fanaseva",
+      tour: "Путешествие на остров Аскольд на катере 32ft",
     },
-    {
-      id: "c02",
-      creator: "@evgivi",
-      date: "2026-06-26",
-      tourId: "barbecue",
-      link: "https://example.com/evgivi-barbecue",
-      createdAt: "2026-06-28T06:00:00Z",
+    to: {
+      date: "2026-07-29",
+      telegram: "@a4fanaseva",
+      tour: "Путешествие на остров Аскольд на катере 32ft",
     },
-    {
-      id: "c03",
-      creator: "@mishka",
-      date: "2026-07-05",
-      tourId: "barbecue",
-      link: "https://example.com/mishka-barbecue",
-      createdAt: "2026-07-07T05:00:00Z",
-    },
-    {
-      id: "c04",
-      creator: "@lera.photo",
-      date: "2026-06-28",
-      tourId: "ricorda",
-      link: "https://example.com/lera-ricorda",
-      createdAt: "2026-06-30T05:00:00Z",
-    },
-    {
-      id: "c05",
-      creator: "@danya5kiri",
-      date: "2026-07-10",
-      tourId: "askold",
-      link: "https://example.com/danya-askold",
-      createdAt: "2026-07-12T05:00:00Z",
-    },
-  ],
-};
+  },
+];
 
-export function normalizeCreator(value: string) {
-  const normalized = value.trim().toLowerCase().replace(/^@+/, "");
-  return normalized ? `@${normalized}` : "";
+const KNOWN_BOOKING_CANCELLATIONS = [
+  {
+    date: "2026-07-26",
+    telegram: "@evgivl",
+    tour: "Барбекю на островах",
+  },
+];
+
+function rowString(row: RemoteRow, ...keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return "";
+}
+
+export function normalizeDate(value: unknown) {
+  if (!value) return "";
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return text;
+  return [
+    parsed.getFullYear(),
+    String(parsed.getMonth() + 1).padStart(2, "0"),
+    String(parsed.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+export function normalizeCreator(value: unknown) {
+  let normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+  if (normalized && !normalized.startsWith("@")) normalized = `@${normalized}`;
+  return CREATOR_ALIASES[normalized] ?? normalized;
+}
+
+export function isDeletedCreator(value: unknown) {
+  return DELETED_CREATORS.has(normalizeCreator(value));
+}
+
+export function canonicalTourName(value: unknown) {
+  const original = String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
+  const tour = original.toLowerCase().replace(/ё/g, "е");
+
+  if (!tour) return "";
+  if (tour.includes("барбекю") || tour.includes("купальный круиз")) {
+    return TOURS[0].name;
+  }
+  if (
+    (tour.includes("вечерний круиз") || tour.includes("саксофон")) &&
+    !tour.includes("без саксофона")
+  ) {
+    return TOURS[1].name;
+  }
+  if (
+    tour.includes("рассказ") ||
+    tour.includes("вечерняя прогулка на катере") ||
+    tour.includes("без саксофона")
+  ) {
+    return TOURS[8].name;
+  }
+  if (/острова?\s+рик[оа]рда/.test(tour)) return TOURS[2].name;
+  if (/острова?\s+русск/.test(tour)) return TOURS[3].name;
+  if (
+    tour.includes("отдых на катере") &&
+    (tour.includes("рыбал") || tour.includes("32"))
+  ) {
+    return TOURS[4].name;
+  }
+  if (tour.includes("остров шкота")) return TOURS[5].name;
+  if (
+    tour.includes("архипелаг") ||
+    (tour.includes("желтухин") && tour.includes("карамзин"))
+  ) {
+    return TOURS[6].name;
+  }
+  if (tour.includes("остров аскольд")) return TOURS[7].name;
+  return original;
+}
+
+export function normalizeTour(value: unknown) {
+  return canonicalTourName(value).toLowerCase().replace(/\s+/g, " ");
+}
+
+export function isExcludedTour(value: unknown) {
+  return /(?:2\s*[-–—]?\s*[хx]?\s*[-–—]?\s*днев|двух\s*[-–—]?\s*днев|два\s+дн)/i.test(
+    String(value ?? ""),
+  );
 }
 
 export function getTour(tourId: string) {
   return TOURS.find((tour) => tour.id === tourId);
+}
+
+export function getTourByName(name: unknown) {
+  const normalized = normalizeTour(name);
+  return TOURS.find((tour) => normalizeTour(tour.name) === normalized);
+}
+
+export function getTourName(tourId: string) {
+  return getTour(tourId)?.name ?? "";
+}
+
+export function bookingFingerprint(
+  date: unknown,
+  creator: unknown,
+  tour: unknown,
+) {
+  return [
+    normalizeDate(date),
+    normalizeCreator(creator),
+    normalizeTour(tour),
+  ].join("|");
+}
+
+export function bookingSlotFingerprint(date: unknown, tour: unknown) {
+  return [normalizeDate(date), normalizeTour(tour)].join("|");
+}
+
+function isInactiveBooking(row: RemoteRow) {
+  const status = rowString(row, "status").toLowerCase();
+  return [
+    "отмена",
+    "не пришел",
+    "не пришёл",
+    "отменено",
+    "cancelled",
+    "canceled",
+  ].includes(status);
+}
+
+function decodeFingerprint(value: unknown) {
+  const key = String(value ?? "").trim();
+  if (!key) return "";
+  try {
+    return decodeURIComponent(key);
+  } catch {
+    return key;
+  }
+}
+
+function transferSourceFingerprint(row: RemoteRow) {
+  const direct = rowString(
+    row,
+    "transferFromKey",
+    "replacesBookingKey",
+    "previousBookingKey",
+  );
+  if (direct) return decodeFingerprint(direct);
+
+  const previousDate = normalizeDate(row.previousDate ?? row.fromDate);
+  const previousTour = row.previousTour ?? row.fromTour;
+  const creator = row.previousTelegram ?? row.fromTelegram ?? row.telegram;
+  if (previousDate && previousTour && creator) {
+    return bookingFingerprint(previousDate, creator, previousTour);
+  }
+
+  const marker = rowString(row, "comment").match(/\[transferFrom:([^\]]+)\]/i);
+  return marker ? decodeFingerprint(marker[1]) : "";
+}
+
+function cancellationSourceFingerprint(row: RemoteRow) {
+  const direct = rowString(
+    row,
+    "cancelBookingKey",
+    "cancelsBookingKey",
+    "deletedBookingKey",
+  );
+  if (direct) return decodeFingerprint(direct);
+
+  const marker = rowString(row, "comment").match(/\[cancelBooking:([^\]]+)\]/i);
+  if (marker) return decodeFingerprint(marker[1]);
+  if (rowString(row, "operation").toLowerCase() !== "cancel") return "";
+
+  const previousDate = normalizeDate(row.previousDate ?? row.date);
+  const previousTour = row.previousTour ?? row.tour;
+  const creator = row.previousTelegram ?? row.telegram;
+  return previousDate && previousTour && creator
+    ? bookingFingerprint(previousDate, creator, previousTour)
+    : "";
+}
+
+function isKnownCancellation(row: RemoteRow) {
+  const key = bookingFingerprint(row.date, row.telegram, row.tour);
+  return KNOWN_BOOKING_CANCELLATIONS.some(
+    (item) =>
+      bookingFingerprint(item.date, item.telegram, item.tour) === key,
+  );
+}
+
+function resolveEffectiveBookingRows(rows: RemoteRow[]) {
+  const unique = new Map<string, { row: RemoteRow; index: number }>();
+  const cancelledAt = new Map<string, number>();
+
+  rows.forEach((row, index) => {
+    const cancellationKey = cancellationSourceFingerprint(row);
+    if (cancellationKey) {
+      cancelledAt.set(cancellationKey, index);
+      return;
+    }
+    if (
+      isInactiveBooking(row) ||
+      isDeletedCreator(row.telegram) ||
+      isKnownCancellation(row)
+    ) {
+      return;
+    }
+    unique.set(bookingFingerprint(row.date, row.telegram, row.tour), {
+      row,
+      index,
+    });
+  });
+
+  const transferred = new Set<string>();
+  unique.forEach(({ row }, key) => {
+    const sourceKey = transferSourceFingerprint(row);
+    if (sourceKey && sourceKey !== key) transferred.add(sourceKey);
+  });
+
+  KNOWN_BOOKING_TRANSFERS.forEach(({ from, to }) => {
+    const sourceKey = bookingFingerprint(from.date, from.telegram, from.tour);
+    const targetKey = bookingFingerprint(to.date, to.telegram, to.tour);
+    if (unique.has(sourceKey) && unique.has(targetKey)) transferred.add(sourceKey);
+  });
+
+  return [...unique.entries()]
+    .map(([key, value]) => ({ key, ...value }))
+    .filter(({ key, index }) => {
+      const cancellationIndex = cancelledAt.get(key);
+      const cancelledAfterBooking =
+        cancellationIndex !== undefined && cancellationIndex >= index;
+      return !transferred.has(key) && !cancelledAfterBooking;
+    })
+    .sort((a, b) => a.index - b.index)
+    .map(({ row }) => row);
+}
+
+function rowCreatedAt(row: RemoteRow) {
+  const raw = rowString(
+    row,
+    "createdAt",
+    "timestamp",
+    "submittedAt",
+    "created",
+  );
+  if (!raw) return "";
+  const russian = raw.match(
+    /^(\d{1,2})\.(\d{1,2})\.(\d{4}),?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/,
+  );
+  if (russian) {
+    const [, day, month, year, hour, minute, second = "00"] = russian;
+    const parsedRussian = new Date(
+      `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}T${hour.padStart(2, "0")}:${minute}:${second}+10:00`,
+    );
+    if (!Number.isNaN(parsedRussian.getTime())) return parsedRussian.toISOString();
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString();
+}
+
+export function normalizeContentLink(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  try {
+    const url = new URL(raw);
+    url.hash = "";
+    const removable: string[] = [];
+    url.searchParams.forEach((_value, key) => {
+      const normalizedKey = key.toLowerCase();
+      if (
+        normalizedKey.startsWith("utm_") ||
+        ["igsh", "igshid", "si", "feature", "share"].includes(normalizedKey)
+      ) {
+        removable.push(key);
+      }
+    });
+    removable.forEach((key) => url.searchParams.delete(key));
+    url.searchParams.sort();
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const query = url.searchParams.toString();
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    return (
+      `${url.protocol.toLowerCase()}//${hostname}` +
+      `${url.port ? `:${url.port}` : ""}${path}${query ? `?${query}` : ""}`
+    ).toLowerCase();
+  } catch {
+    return raw.toLowerCase().replace(/\/+$/, "");
+  }
+}
+
+export function isValidContentLink(value: unknown) {
+  try {
+    const url = new URL(String(value ?? "").trim());
+    return (
+      ["http:", "https:"].includes(url.protocol) && url.hostname.includes(".")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function buildWorkingState(rows: RemoteRow[]): WorkingState {
+  const prepared = (Array.isArray(rows) ? rows : []).filter(
+    (row): row is RemoteRow => Boolean(row && typeof row === "object"),
+  );
+  const bookingRows = resolveEffectiveBookingRows(
+    prepared.filter((row) => rowString(row, "type") !== "content_report"),
+  );
+
+  const bookings = bookingRows
+    .filter(
+      (row) =>
+        !isExcludedTour(row.tour) &&
+        normalizeDate(row.date) >= SEASON_START &&
+        normalizeDate(row.date) <= SEASON_END,
+    )
+    .map((row) => {
+      const creator = normalizeCreator(row.telegram);
+      const date = normalizeDate(row.date);
+      const tourName = canonicalTourName(row.tour);
+      const tourId = getTourByName(tourName)?.id ?? "";
+      const sourceKey = bookingFingerprint(date, creator, tourName);
+      return {
+        id: rowString(row, "requestId", "dedupeKey") || sourceKey,
+        sourceKey,
+        creator,
+        date,
+        tourId,
+        tourName,
+        status: "active" as const,
+        createdAt: rowCreatedAt(row),
+      };
+    })
+    .filter((booking) => booking.creator && booking.date && booking.tourId);
+
+  const seenLinks = new Set<string>();
+  const reportRows = prepared
+    .filter((row) => rowString(row, "type") === "content_report")
+    .reverse();
+  const content = reportRows
+    .map((row, index) => {
+      const creator = normalizeCreator(
+        row.telegram ?? row.creator ?? row.nickname ?? row.name,
+      );
+      const link = rowString(row, "link", "url", "contentUrl");
+      const linkKey = normalizeContentLink(link);
+      const matchStatus = rowString(row, "matchStatus");
+      if (
+        !creator ||
+        isDeletedCreator(creator) ||
+        !isValidContentLink(link) ||
+        seenLinks.has(linkKey) ||
+        (matchStatus &&
+          matchStatus !== "Есть запись" &&
+          matchStatus !== "Запись не найдена")
+      ) {
+        return null;
+      }
+      seenLinks.add(linkKey);
+
+      const tourName = canonicalTourName(row.tour ?? row.tourName);
+      const tourId = getTourByName(tourName)?.id ?? "";
+      let date = normalizeDate(row.date);
+      if (matchStatus === "Запись не найдена") {
+        const match = [...bookings]
+          .filter(
+            (booking) =>
+              booking.creator === creator && booking.tourId === tourId,
+          )
+          .sort((a, b) => b.date.localeCompare(a.date))[0];
+        if (match) date = match.date;
+      }
+
+      return {
+        id:
+          rowString(row, "requestId", "dedupeKey") ||
+          `content-${index}-${linkKey}`,
+        creator,
+        date,
+        tourId,
+        tourName,
+        link,
+        createdAt: rowCreatedAt(row),
+      };
+    })
+    .filter((item): item is ContentItem => Boolean(item?.tourId));
+
+  return { bookings, content };
+}
+
+export function getTodayKey() {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Vladivostok",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const values = Object.fromEntries(
+      parts.map((part) => [part.type, part.value]),
+    );
+    return `${values.year}-${values.month}-${values.day}`;
+  } catch {
+    const now = new Date();
+    return [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+    ].join("-");
+  }
+}
+
+export const DEMO_TODAY = getTodayKey();
+
+export function getDefaultBookableDate() {
+  const today = getTodayKey();
+  return (
+    Object.keys(SCHEDULE)
+      .sort()
+      .find(
+        (date) =>
+          date >= BOOKING_START &&
+          date >= today &&
+          date <= SEASON_END &&
+          SCHEDULE[date].length > 0,
+      ) ?? BOOKING_START
+  );
 }
 
 export function formatDateRu(date: string) {
@@ -230,6 +577,17 @@ export function formatDateRu(date: string) {
     day: "numeric",
     month: "long",
   }).format(new Date(`${date}T12:00:00+10:00`));
+}
+
+export function formatMonthRu(month: string) {
+  if (!/^\d{4}-\d{2}$/.test(month)) return month;
+  const [year, monthNumber] = month.split("-").map(Number);
+  const label = new Intl.DateTimeFormat("ru-RU", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 export function platformFromLink(link: string) {

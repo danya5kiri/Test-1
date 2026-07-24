@@ -474,6 +474,11 @@ button.tile {
   justify-content: space-between;
 }
 
+.tile--weather small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
 .weather-temp {
   font-size: clamp(38px, 12vw, 54px);
   font-weight: 300;
@@ -538,10 +543,44 @@ button.tile {
   font-size: 12px;
 }
 
+.leader-carousel-meta {
+  display: flex;
+  width: min(100%, 430px);
+  margin-top: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .tile--rating .top-badge {
   position: absolute;
   top: 20px;
   right: 18px;
+}
+
+.leader-dots {
+  position: absolute;
+  right: 20px;
+  bottom: 11px;
+  display: flex;
+  gap: 5px;
+}
+
+.leader-dots span {
+  width: 14px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  transition: width 0.25s ease, background 0.25s ease;
+}
+
+.leader-dots span.is-active {
+  width: 28px;
+  background: var(--lime);
 }
 
 .podium {
@@ -791,6 +830,13 @@ button.tile {
   cursor: pointer;
 }
 
+.primary-button:disabled,
+.booking-call-button:disabled,
+.test-settings button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .profile-entry {
   display: grid;
   gap: 12px;
@@ -1003,6 +1049,23 @@ button.tile {
   display: grid;
   align-content: start;
   gap: 14px;
+}
+
+.booking-submit-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.booking-call-button {
+  min-height: 48px;
+  padding: 0 18px;
+  border: 1px solid rgba(21, 23, 20, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .selected-date-head {
@@ -2015,8 +2078,8 @@ button.tile {
   padding: 0 14px;
   border: 0;
   border-radius: 999px;
-  background: rgba(255, 122, 36, 0.12);
-  color: #8f390f;
+  background: rgba(217, 255, 82, 0.55);
+  color: var(--ink);
   font-size: 9px;
   font-weight: 600;
   cursor: pointer;

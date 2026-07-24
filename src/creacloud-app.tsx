@@ -2,18 +2,36 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  bookingContactUrl,
+  ContactMode,
+  createBookingPayload,
+  createCancellationPayload,
+  createContentPayload,
+  fetchVladivostokWeather,
+  fetchWorkingState,
+  sendWorkingPayload,
+  WeatherSummary,
+} from "./creacloud-api";
+import {
   Booking,
+  BOOKING_START,
   ContentItem,
   DEMO_TODAY,
-  DemoState,
   formatDateRu,
+  formatMonthRu,
+  getDefaultBookableDate,
   getTour,
-  INITIAL_DEMO_STATE,
+  isDeletedCreator,
+  isValidContentLink,
   normalizeCreator,
+  normalizeContentLink,
   platformFromLink,
+  SEASON_END,
+  SEASON_MONTHS,
   SCHEDULE,
   TOURS,
   TOTAL_UNIQUE_TOURS,
+  WorkingState,
 } from "./creacloud-data";
 
 type Panel =
@@ -29,11 +47,49 @@ type Panel =
 
 type BookingView = "new" | "manage" | "transfer";
 type RatingMode = "visits" | "unique" | "content";
+type DataStatus = "loading" | "live" | "cached" | "error";
 
-const STORAGE_KEY = "creacloud-test-1-v1";
+const CACHE_KEY = "creacloud-test-1-working-cache-v2";
+const RECENT_WRITES_KEY = "creacloud-test-1-recent-writes-v2";
+const RECENT_WRITE_TTL = 15 * 60 * 1000;
 
-function cloneInitialState(): DemoState {
-  return JSON.parse(JSON.stringify(INITIAL_DEMO_STATE)) as DemoState;
+function emptyWorkingState(): WorkingState {
+  return { bookings: [], content: [] };
+}
+
+type RecentWrite = { key: string; timestamp: number };
+
+function readRecentWrites() {
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(RECENT_WRITES_KEY) ?? "[]",
+    ) as RecentWrite[];
+    const cutoff = Date.now() - RECENT_WRITE_TTL;
+    return parsed.filter(
+      (item) =>
+        item &&
+        typeof item.key === "string" &&
+        Number(item.timestamp) >= cutoff,
+    );
+  } catch {
+    return [];
+  }
+}
+
+function wasRecentlyWritten(key: string) {
+  return readRecentWrites().some((item) => item.key === key);
+}
+
+function rememberWrite(key: string) {
+  try {
+    const next = [
+      ...readRecentWrites().filter((item) => item.key !== key),
+      { key, timestamp: Date.now() },
+    ].slice(-30);
+    window.localStorage.setItem(RECENT_WRITES_KEY, JSON.stringify(next));
+  } catch {
+    // The server-side dedupe key still protects the shared base.
+  }
 }
 
 function pluralRu(
@@ -293,7 +349,7 @@ type RankingRow = {
   materials: number;
 };
 
-function getRankings(state: DemoState): RankingRow[] {
+function getRankings(state: WorkingState): RankingRow[] {
   const map = new Map<string, RankingRow & { uniqueKeys: Set<string> }>();
   state.bookings
     .filter((booking) => booking.status === "active")
@@ -337,21 +393,76 @@ function getRankings(state: DemoState): RankingRow[] {
     );
 }
 
+function getSeasonProgress() {
+  const start = new Date("2026-04-01T00:00:00+10:00").getTime();
+  const end = new Date("2026-10-20T23:59:59+10:00").getTime();
+  const current = Date.now();
+  return Math.max(
+    0,
+    Math.min(100, Math.round(((current - start) / (end - start)) * 100)),
+  );
+}
+
 function Dashboard({
   state,
+  weather,
   onOpen,
   onTestInfo,
 }: {
-  state: DemoState;
+  state: WorkingState;
+  weather: WeatherSummary;
   onOpen: (panel: Exclude<Panel, null>) => void;
   onTestInfo: () => void;
 }) {
   const rankings = getRankings(state);
-  const leader = rankings[0];
+  const leaderSlides = [
+    {
+      label: "Лидер по поездкам",
+      row: [...rankings].sort(
+        (a, b) =>
+          b.visits - a.visits ||
+          b.unique - a.unique ||
+          a.creator.localeCompare(b.creator, "ru"),
+      )[0],
+      value: (row: RankingRow) =>
+        `${row.visits} ${pluralRu(row.visits, "поездка", "поездки", "поездок")}`,
+    },
+    {
+      label: "Лидер по уникальным турам",
+      row: [...rankings].sort(
+        (a, b) =>
+          b.unique - a.unique ||
+          b.visits - a.visits ||
+          a.creator.localeCompare(b.creator, "ru"),
+      )[0],
+      value: (row: RankingRow) =>
+        `${row.unique} ${pluralRu(row.unique, "тур", "тура", "туров")} из ${TOTAL_UNIQUE_TOURS}`,
+    },
+    {
+      label: "Лидер по контенту",
+      row: [...rankings].sort(
+        (a, b) =>
+          b.materials - a.materials ||
+          b.visits - a.visits ||
+          a.creator.localeCompare(b.creator, "ru"),
+      )[0],
+      value: (row: RankingRow) =>
+        `${row.materials} ${pluralRu(row.materials, "работа", "работы", "работ")}`,
+    },
+  ];
+  const [leaderSlide, setLeaderSlide] = useState(0);
+  const currentLeader = leaderSlides[leaderSlide];
   const activeBookings = state.bookings.filter(
     (booking) => booking.status === "active",
   );
   const creators = new Set(activeBookings.map((booking) => booking.creator)).size;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setLeaderSlide((current) => (current + 1) % leaderSlides.length);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [leaderSlides.length]);
 
   return (
     <main className="dashboard">
@@ -359,7 +470,7 @@ function Dashboard({
         <div className="dashboard__brand">
           <Logo compact />
           <button className="test-badge" onClick={onTestInfo}>
-            ТЕСТ
+            TEST-1
           </button>
         </div>
         <button
@@ -384,29 +495,54 @@ function Dashboard({
 
         <article className="tile tile--weather">
           <strong>Погода</strong>
-          <span className="weather-temp">+22°</span>
+          <span className="weather-temp">{weather.temperature}</span>
           <Icon name="cloud" size={42} />
+          <small>{weather.label}</small>
         </article>
 
         <article className="tile tile--season">
           <strong>Сезон</strong>
-          <div className="season-ring">
-            <span>57%</span>
+          <div
+            className="season-ring"
+            style={{
+              background: `conic-gradient(var(--violet) 0 ${getSeasonProgress()}%, rgba(255, 255, 255, 0.82) ${getSeasonProgress()}% 100%)`,
+            }}
+          >
+            <span>{getSeasonProgress()}%</span>
           </div>
         </article>
 
         <button className="tile tile--rating" onClick={() => onOpen("rating")}>
           <div>
             <SplitTitle strong="Рейтинг" light="креаторов" as="h2" />
-            <p>{leader ? `${leader.creator} — лидер недели` : "Рейтинг формируется"}</p>
+            <p>
+              {currentLeader.row
+                ? `${currentLeader.row.creator} · ${currentLeader.value(currentLeader.row)}`
+                : "Рейтинг формируется"}
+            </p>
+            <div className="leader-carousel-meta">
+              <span>{currentLeader.label}</span>
+              <span>
+                {String(leaderSlide + 1).padStart(2, "0")} /{" "}
+                {String(leaderSlides.length).padStart(2, "0")}
+              </span>
+            </div>
           </div>
-          <span className="top-badge">ТОП</span>
+          <span className="top-badge">ТОП · {leaderSlide + 1}</span>
           <div className="podium" aria-hidden="true">
             <span />
             <span>
               <Icon name="star" />
             </span>
             <span />
+          </div>
+          <div className="leader-dots" aria-hidden="true">
+            {leaderSlides.map((slide, index) => (
+              <span
+                key={slide.label}
+                className={index === leaderSlide ? "is-active" : ""}
+              />
+            ))}
           </div>
         </button>
 
@@ -481,7 +617,7 @@ function ModalShell({
         </header>
         <div className="demo-mode-note">
           <span />
-          Тестовые данные · рабочая база не изменяется
+          Рабочая база · действия общие с основным сайтом
         </div>
         <div className="modal__body">{children}</div>
       </section>
@@ -498,7 +634,7 @@ function CalendarMonth({
 }: {
   month: string;
   selectedDate: string;
-  state: DemoState;
+  state: WorkingState;
   onMonth: (month: string) => void;
   onSelect: (date: string) => void;
 }) {
@@ -516,10 +652,7 @@ function CalendarMonth({
       };
     }),
   ];
-  const months: Record<string, string> = {
-    "2026-07": "Июль 2026",
-    "2026-08": "Август 2026",
-  };
+  const monthIndex = (SEASON_MONTHS as readonly string[]).indexOf(month);
   const activeBookings = state.bookings.filter(
     (booking) => booking.status === "active",
   );
@@ -529,16 +662,16 @@ function CalendarMonth({
       <div className="calendar-card__controls">
         <button
           aria-label="Предыдущий месяц"
-          disabled={month === "2026-07"}
-          onClick={() => onMonth("2026-07")}
+          disabled={monthIndex <= 0}
+          onClick={() => onMonth(SEASON_MONTHS[monthIndex - 1])}
         >
           <Icon name="left" />
         </button>
-        <strong>{months[month]}</strong>
+        <strong>{formatMonthRu(month)}</strong>
         <button
           aria-label="Следующий месяц"
-          disabled={month === "2026-08"}
-          onClick={() => onMonth("2026-08")}
+          disabled={monthIndex >= SEASON_MONTHS.length - 1}
+          onClick={() => onMonth(SEASON_MONTHS[monthIndex + 1])}
         >
           <Icon name="right" />
         </button>
@@ -558,7 +691,11 @@ function CalendarMonth({
                 booking.date === cell.date && booking.tourId === tourId,
             ),
           ).length;
-          const disabled = cell.date < DEMO_TODAY || scheduled.length === 0;
+          const disabled =
+            cell.date < BOOKING_START ||
+            cell.date < DEMO_TODAY ||
+            cell.date > SEASON_END ||
+            scheduled.length === 0;
           return (
             <button
               key={cell.date}
@@ -610,8 +747,9 @@ function BookingPanel({
   onTransferSource,
   onSubmit,
   onCancelBooking,
+  busy,
 }: {
-  state: DemoState;
+  state: WorkingState;
   view: BookingView;
   activeCreator: string;
   selectedDate: string;
@@ -622,17 +760,24 @@ function BookingPanel({
   onTour: (tourId: string) => void;
   onCreator: (creator: string) => void;
   onTransferSource: (bookingId: string) => void;
-  onSubmit: () => void;
+  onSubmit: (contactMode: ContactMode) => void;
   onCancelBooking: (bookingId: string) => void;
+  busy: boolean;
 }) {
-  const [month, setMonth] = useState(selectedDate.startsWith("2026-08") ? "2026-08" : "2026-07");
+  const selectedMonth = selectedDate.slice(0, 7);
+  const [month, setMonth] = useState(
+    (SEASON_MONTHS as readonly string[]).includes(selectedMonth)
+      ? selectedMonth
+      : getDefaultBookableDate().slice(0, 7),
+  );
   const activeBookings = state.bookings.filter(
     (booking) => booking.status === "active",
   );
   const upcoming = activeBookings
     .filter(
       (booking) =>
-        booking.creator === activeCreator && booking.date >= DEMO_TODAY,
+        booking.creator === normalizeCreator(activeCreator) &&
+        booking.date >= DEMO_TODAY,
     )
     .sort((a, b) => a.date.localeCompare(b.date));
   const schedule = SCHEDULE[selectedDate] ?? [];
@@ -654,6 +799,7 @@ function BookingPanel({
                 <strong>{getTour(booking.tourId)?.name}</strong>
                 <div className="booking-card__actions">
                   <button
+                    disabled={busy}
                     onClick={() => {
                       onTransferSource(booking.id);
                       onView("transfer");
@@ -663,6 +809,7 @@ function BookingPanel({
                   </button>
                   <button
                     className="is-danger"
+                    disabled={busy}
                     onClick={() => onCancelBooking(booking.id)}
                   >
                     <Icon name="trash" size={18} />
@@ -694,7 +841,16 @@ function BookingPanel({
         state={state}
         onMonth={(nextMonth) => {
           setMonth(nextMonth);
-          const fallback = nextMonth === "2026-08" ? "2026-08-01" : "2026-07-24";
+          const fallback =
+            Object.keys(SCHEDULE)
+              .sort()
+              .find(
+                (date) =>
+                  date.startsWith(nextMonth) &&
+                  date >= BOOKING_START &&
+                  date >= DEMO_TODAY &&
+                  SCHEDULE[date].length > 0,
+              ) ?? `${nextMonth}-01`;
           onDate(fallback);
           onTour("");
         }}
@@ -772,9 +928,26 @@ function BookingPanel({
             autoCapitalize="none"
           />
         </label>
-        <button className="primary-button" onClick={onSubmit}>
-          {view === "transfer" ? "Сохранить перенос" : "Забронировать тестово"}
-        </button>
+        <div className="booking-submit-actions">
+          <button
+            className="primary-button"
+            disabled={busy}
+            onClick={() => onSubmit("whatsapp")}
+          >
+            {busy
+              ? "Сохраняем..."
+              : view === "transfer"
+                ? "Перенести и открыть WhatsApp"
+                : "Забронировать и открыть WhatsApp"}
+          </button>
+          <button
+            className="booking-call-button"
+            disabled={busy}
+            onClick={() => onSubmit("call")}
+          >
+            Позвонить для записи
+          </button>
+        </div>
         <button
           className="text-button"
           onClick={() => onView(view === "transfer" ? "new" : "manage")}
@@ -824,7 +997,7 @@ function ProfileLogin({
         </button>
       </section>
       <section className="profile-suggestions">
-        <small>Можно проверить на демо-профиле</small>
+        <small>Профили из действующей базы</small>
         <div>
           {creators.slice(0, 4).map((creator) => (
             <button key={creator} onClick={() => onChange(creator)}>
@@ -844,7 +1017,7 @@ function ProfilePanel({
   onAddContent,
   onBookRecommendation,
 }: {
-  state: DemoState;
+  state: WorkingState;
   creator: string;
   onManage: () => void;
   onAddContent: () => void;
@@ -963,8 +1136,8 @@ function ProfilePanel({
           <small>Ближайшая бронь</small>
           {upcoming ? (
             <>
-              <strong>{formatDateRu(upcoming.date)} · 11:00</strong>
-              <p>{getTour(upcoming.tourId)?.name}</p>
+              <strong>{formatDateRu(upcoming.date)}</strong>
+              <p>{getTour(upcoming.tourId)?.name ?? upcoming.tourName}</p>
             </>
           ) : (
             <>
@@ -1059,8 +1232,9 @@ function ContentPanel({
   onLink,
   onSubmit,
   onResults,
+  busy,
 }: {
-  state: DemoState;
+  state: WorkingState;
   creator: string;
   tourId: string;
   link: string;
@@ -1070,6 +1244,7 @@ function ContentPanel({
   onLink: (value: string) => void;
   onSubmit: () => void;
   onResults: () => void;
+  busy: boolean;
 }) {
   const knownCreators = [
     ...new Set(
@@ -1114,7 +1289,7 @@ function ContentPanel({
             <option value="">Выберите тур</option>
             {visitedTourIds.map((id) => (
               <option key={id} value={id}>
-                {getTour(id)?.name}
+                {getTour(id)?.name ?? id}
               </option>
             ))}
           </select>
@@ -1135,8 +1310,8 @@ function ContentPanel({
           Дата поездки будет найдена автоматически по нику и выбранному туру.
         </div>
         {error && <div className="form-error">{error}</div>}
-        <button className="primary-button" onClick={onSubmit}>
-          Добавить готовый контент
+        <button className="primary-button" disabled={busy} onClick={onSubmit}>
+          {busy ? "Добавляем..." : "Добавить готовый контент"}
         </button>
       </section>
       <aside className="content-aside">
@@ -1163,7 +1338,7 @@ function RatingPanel({
   mode,
   onMode,
 }: {
-  state: DemoState;
+  state: WorkingState;
   mode: RatingMode;
   onMode: (mode: RatingMode) => void;
 }) {
@@ -1262,7 +1437,7 @@ function ResultsPanel({
   onFilter,
   onStory,
 }: {
-  state: DemoState;
+  state: WorkingState;
   filter: string;
   onFilter: (value: string) => void;
   onStory: (item: ContentItem) => void;
@@ -1383,16 +1558,22 @@ function StoryPanel({
 
 function NoticesPanel({
   state,
-  onReset,
+  dataStatus,
+  lastSynced,
+  refreshing,
+  onRefresh,
 }: {
-  state: DemoState;
-  onReset: () => void;
+  state: WorkingState;
+  dataStatus: DataStatus;
+  lastSynced: string;
+  refreshing: boolean;
+  onRefresh: () => void;
 }) {
   const rankings = getRankings(state);
   const todayBookings = state.bookings.filter(
     (booking) =>
       booking.status === "active" &&
-      booking.createdAt.slice(0, 10) === "2026-07-23",
+      booking.createdAt.slice(0, 10) === DEMO_TODAY,
   );
   return (
     <div className="notices-layout">
@@ -1442,13 +1623,22 @@ function NoticesPanel({
       </section>
       <section className="test-settings">
         <div>
-          <strong>Безопасный тестовый режим</strong>
+          <strong>
+            {dataStatus === "live"
+              ? "Рабочая база подключена"
+              : dataStatus === "cached"
+                ? "Показана последняя сохранённая копия"
+                : "Проверяем подключение"}
+          </strong>
           <p>
-            Брони и публикации сохраняются только в этом браузере. Google-таблица
-            действующего сайта не используется.
+            Бронирования, переносы, отмены и публикации в Test-1 записываются в
+            ту же базу, что и на основном сайте.
+            {lastSynced ? ` Последняя синхронизация: ${lastSynced}.` : ""}
           </p>
         </div>
-        <button onClick={onReset}>Сбросить демо-данные</button>
+        <button disabled={refreshing} onClick={onRefresh}>
+          {refreshing ? "Обновляем..." : "Обновить данные"}
+        </button>
       </section>
     </div>
   );
@@ -1469,12 +1659,20 @@ export default function CreacloudApp() {
   const [loading, setLoading] = useState(true);
   const [entered, setEntered] = useState(false);
   const [panel, setPanel] = useState<Panel>(null);
-  const [state, setState] = useState<DemoState>(() => cloneInitialState());
+  const [state, setState] = useState<WorkingState>(() => emptyWorkingState());
+  const [dataStatus, setDataStatus] = useState<DataStatus>("loading");
+  const [lastSynced, setLastSynced] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [writeBusy, setWriteBusy] = useState(false);
+  const [weather, setWeather] = useState<WeatherSummary>({
+    temperature: "—",
+    label: "Владивосток",
+  });
   const [activeCreator, setActiveCreator] = useState("");
-  const [profileInput, setProfileInput] = useState("@evgivi");
+  const [profileInput, setProfileInput] = useState("");
   const [profileError, setProfileError] = useState("");
   const [bookingView, setBookingView] = useState<BookingView>("new");
-  const [selectedDate, setSelectedDate] = useState("2026-07-28");
+  const [selectedDate, setSelectedDate] = useState(getDefaultBookableDate);
   const [selectedTour, setSelectedTour] = useState("");
   const [transferSourceId, setTransferSourceId] = useState("");
   const [contentCreator, setContentCreator] = useState("");
@@ -1496,12 +1694,15 @@ export default function CreacloudApp() {
     [activeBookings],
   );
 
-  function persist(next: DemoState) {
+  function saveCachedState(next: WorkingState, syncedAt = new Date()) {
     setState(next);
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      window.localStorage.setItem(
+        CACHE_KEY,
+        JSON.stringify({ state: next, savedAt: syncedAt.toISOString() }),
+      );
     } catch {
-      // The demo still works in-memory when storage is unavailable.
+      // A cache failure must not block the live working base.
     }
   }
 
@@ -1509,21 +1710,92 @@ export default function CreacloudApp() {
     setToast(message);
   }
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setLoading(false), 1050);
-    let storageTimer: number | undefined;
+  function syncLabel(value = new Date()) {
+    return new Intl.DateTimeFormat("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(value);
+  }
+
+  async function refreshWorkingData(showMessage = true) {
+    setRefreshing(true);
     try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
+      const next = await fetchWorkingState();
+      saveCachedState(next);
+      setDataStatus("live");
+      setLastSynced(syncLabel());
+      if (showMessage) notify("Данные рабочей базы обновлены.");
+      return next;
+    } catch {
+      setDataStatus(state.bookings.length || state.content.length ? "cached" : "error");
+      if (showMessage) {
+        notify("Не удалось обновить базу. Показаны последние сохранённые данные.");
+      }
+      return null;
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    const startedAt = Date.now();
+
+    try {
+      const saved = window.localStorage.getItem(CACHE_KEY);
       if (saved) {
-        const parsed = JSON.parse(saved) as DemoState;
-        storageTimer = window.setTimeout(() => setState(parsed), 0);
+        const parsed = JSON.parse(saved) as {
+          state?: WorkingState;
+          savedAt?: string;
+        };
+        if (
+          parsed.state &&
+          Array.isArray(parsed.state.bookings) &&
+          Array.isArray(parsed.state.content)
+        ) {
+          setState(parsed.state);
+          setDataStatus("cached");
+          if (parsed.savedAt) {
+            const cachedAt = new Date(parsed.savedAt);
+            if (!Number.isNaN(cachedAt.getTime())) {
+              setLastSynced(syncLabel(cachedAt));
+            }
+          }
+        }
       }
     } catch {
-      // Keep the seeded state.
+      // Continue with a live load when the isolated cache is unavailable.
     }
+
+    const dataRequest = fetchWorkingState()
+      .then((next) => {
+        if (cancelled) return;
+        saveCachedState(next);
+        setDataStatus("live");
+        setLastSynced(syncLabel());
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDataStatus((current) => (current === "cached" ? "cached" : "error"));
+      });
+
+    const weatherRequest = fetchVladivostokWeather()
+      .then((next) => {
+        if (!cancelled) setWeather(next);
+      })
+      .catch(() => {
+        // Weather is informative and must not block the main data.
+      });
+
+    Promise.allSettled([dataRequest, weatherRequest]).then(() => {
+      const remaining = Math.max(0, 1050 - (Date.now() - startedAt));
+      window.setTimeout(() => {
+        if (!cancelled) setLoading(false);
+      }, remaining);
+    });
+
     return () => {
-      window.clearTimeout(timer);
-      if (storageTimer !== undefined) window.clearTimeout(storageTimer);
+      cancelled = true;
     };
   }, []);
 
@@ -1584,72 +1856,232 @@ export default function CreacloudApp() {
     setPanel("profile");
   }
 
-  function submitBooking() {
-    const creator = normalizeCreator(activeCreator);
+  async function submitBooking(contactMode: ContactMode) {
+    let creator = normalizeCreator(activeCreator);
+    const mode = bookingView === "transfer" ? "transfer" : "new";
     if (!creator) {
       notify("Введите ник креатора.");
+      return;
+    }
+    if (isDeletedCreator(creator)) {
+      notify("Этот профиль удалён и недоступен для бронирования.");
       return;
     }
     if (!selectedDate || !selectedTour) {
       notify("Выберите дату и свободный тур.");
       return;
     }
-    const conflict = state.bookings.some(
+    if (
+      selectedDate < BOOKING_START ||
+      selectedDate < DEMO_TODAY ||
+      selectedDate > SEASON_END ||
+      !(SCHEDULE[selectedDate] ?? []).includes(selectedTour)
+    ) {
+      notify("Эта дата или программа уже недоступна для записи.");
+      return;
+    }
+
+    const localSource =
+      mode === "transfer"
+        ? state.bookings.find((booking) => booking.id === transferSourceId)
+        : undefined;
+    if (mode === "transfer" && !localSource) {
+      notify("Выберите активную бронь для переноса.");
+      return;
+    }
+    if (localSource && localSource.creator !== creator) {
+      notify("Выбранная бронь принадлежит другому нику.");
+      return;
+    }
+
+    const localConflict = state.bookings.some(
       (booking) =>
         booking.status === "active" &&
         booking.date === selectedDate &&
         booking.tourId === selectedTour &&
-        booking.id !== transferSourceId,
+        booking.sourceKey !== localSource?.sourceKey,
     );
-    if (conflict) {
+    if (localConflict) {
       notify("Это окно уже занято. Выберите другой тур.");
       return;
     }
-    const now = new Date().toISOString();
-    const nextBooking: Booking = {
-      id: `demo-${Date.now()}`,
-      creator,
-      date: selectedDate,
-      tourId: selectedTour,
-      status: "active",
-      createdAt: now,
-    };
-    let nextBookings = [...state.bookings];
-    if (bookingView === "transfer") {
-      if (!transferSourceId) {
-        notify("Выберите бронь для переноса.");
+
+    setWriteBusy(true);
+    try {
+      const latest = await fetchWorkingState();
+      const existingCreator = latest.bookings.find(
+        (booking) => booking.creator === creator,
+      );
+      if (existingCreator) creator = existingCreator.creator;
+
+      const source =
+        mode === "transfer" && localSource
+          ? latest.bookings.find(
+              (booking) => booking.sourceKey === localSource.sourceKey,
+            )
+          : undefined;
+      if (mode === "transfer" && !source) {
+        saveCachedState(latest);
+        notify("Исходная бронь уже была изменена. Выберите её заново.");
         return;
       }
-      nextBookings = nextBookings.map((booking) =>
-        booking.id === transferSourceId
-          ? { ...booking, status: "cancelled" as const }
-          : booking,
+      if (source && source.creator !== creator) {
+        notify("Исходная бронь больше не принадлежит указанному нику.");
+        return;
+      }
+
+      const conflict = latest.bookings.some(
+        (booking) =>
+          booking.date === selectedDate &&
+          booking.tourId === selectedTour &&
+          booking.sourceKey !== source?.sourceKey,
       );
+      if (conflict) {
+        saveCachedState(latest);
+        notify("Этот тур уже занял другой креатор. Выберите другое окно.");
+        return;
+      }
+
+      const { payload, targetKey, dedupeKey, tourName } =
+        createBookingPayload({
+          mode,
+          creator,
+          date: selectedDate,
+          tourId: selectedTour,
+          source,
+          contactMode,
+        });
+      if (source?.sourceKey === targetKey) {
+        notify("Для переноса выберите другую дату или программу.");
+        return;
+      }
+      if (wasRecentlyWritten(dedupeKey)) {
+        notify(mode === "transfer" ? "Такой перенос уже отправлен." : "Такая бронь уже отправлена.");
+        return;
+      }
+
+      await sendWorkingPayload(payload);
+      rememberWrite(dedupeKey);
+
+      const optimistic: Booking = {
+        id: String(payload.requestId),
+        sourceKey: targetKey,
+        creator,
+        date: selectedDate,
+        tourId: selectedTour,
+        tourName,
+        status: "active",
+        createdAt: new Date().toISOString(),
+      };
+      const nextBookings =
+        mode === "transfer" && source
+          ? latest.bookings.filter(
+              (booking) => booking.sourceKey !== source.sourceKey,
+            )
+          : [...latest.bookings];
+      nextBookings.push(optimistic);
+      saveCachedState({ ...latest, bookings: nextBookings });
+      setDataStatus("live");
+      setLastSynced(syncLabel());
+      setActiveCreator(creator);
+      setProfileInput(creator);
+      setSelectedTour("");
+      setTransferSourceId("");
+      setBookingView("manage");
+      notify(
+        mode === "transfer"
+          ? "Запись перенесена в рабочей базе."
+          : "Бронь создана в рабочей базе.",
+      );
+
+      const contactUrl = bookingContactUrl({
+        contactMode,
+        mode,
+        creator,
+        date: selectedDate,
+        tourName,
+        source,
+      });
+      window.setTimeout(() => {
+        window.location.href = contactUrl;
+      }, 450);
+      window.setTimeout(() => {
+        void refreshWorkingData(false);
+      }, 2200);
+    } catch {
+      notify("Не удалось проверить или сохранить бронь. Повторите попытку.");
+    } finally {
+      setWriteBusy(false);
     }
-    nextBookings.push(nextBooking);
-    persist({ ...state, bookings: nextBookings });
-    setActiveCreator(creator);
-    setProfileInput(creator);
-    setSelectedTour("");
-    setTransferSourceId("");
-    setBookingView("manage");
-    notify(
-      bookingView === "transfer"
-        ? "Тестовая бронь перенесена."
-        : "Тестовая бронь создана.",
-    );
   }
 
-  function cancelBooking(bookingId: string) {
-    persist({
-      ...state,
-      bookings: state.bookings.map((booking) =>
-        booking.id === bookingId
-          ? { ...booking, status: "cancelled" as const }
-          : booking,
-      ),
-    });
-    notify("Тестовая бронь отменена, место снова свободно.");
+  async function cancelBooking(bookingId: string) {
+    const localSource = state.bookings.find(
+      (booking) => booking.id === bookingId,
+    );
+    if (!localSource) {
+      notify("Бронь уже не найдена.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Удалить бронь ${formatDateRu(localSource.date)} — ${localSource.tourName}?`,
+      )
+    ) {
+      return;
+    }
+
+    setWriteBusy(true);
+    try {
+      const latest = await fetchWorkingState();
+      const source = latest.bookings.find(
+        (booking) => booking.sourceKey === localSource.sourceKey,
+      );
+      if (!source || source.date < DEMO_TODAY) {
+        saveCachedState(latest);
+        notify("Эта бронь уже изменена или недоступна для отмены.");
+        return;
+      }
+      const { payload, dedupeKey } = createCancellationPayload({
+        source,
+        contactMode: "whatsapp",
+      });
+      if (wasRecentlyWritten(dedupeKey)) {
+        notify("Удаление этой брони уже отправлено.");
+        return;
+      }
+
+      await sendWorkingPayload(payload);
+      rememberWrite(dedupeKey);
+      saveCachedState({
+        ...latest,
+        bookings: latest.bookings.filter(
+          (booking) => booking.sourceKey !== source.sourceKey,
+        ),
+      });
+      setDataStatus("live");
+      setLastSynced(syncLabel());
+      notify("Бронь удалена из рабочей базы, место снова свободно.");
+
+      const contactUrl = bookingContactUrl({
+        contactMode: "whatsapp",
+        mode: "cancel",
+        creator: source.creator,
+        date: source.date,
+        tourName: source.tourName,
+        source,
+      });
+      window.setTimeout(() => {
+        window.location.href = contactUrl;
+      }, 450);
+      window.setTimeout(() => {
+        void refreshWorkingData(false);
+      }, 2200);
+    } catch {
+      notify("Не удалось проверить или удалить бронь. Повторите попытку.");
+    } finally {
+      setWriteBusy(false);
+    }
   }
 
   function openContent(creator = activeCreator) {
@@ -1660,59 +2092,103 @@ export default function CreacloudApp() {
     setPanel("content");
   }
 
-  function submitContent() {
-    const creator = normalizeCreator(contentCreator);
-    const booking = state.bookings
-      .filter(
-        (item) =>
-          item.status === "active" &&
-          item.creator === creator &&
-          item.tourId === contentTour,
-      )
-      .sort((a, b) => b.date.localeCompare(a.date))[0];
+  async function submitContent() {
+    let creator = normalizeCreator(contentCreator);
     if (!creator || !knownCreators.includes(creator)) {
       setContentError("Выберите ник, который уже записывался на тур.");
       return;
     }
-    if (!contentTour || !booking) {
+    if (isDeletedCreator(creator)) {
+      setContentError("Этот профиль удалён и не может добавлять публикации.");
+      return;
+    }
+    if (!contentTour) {
       setContentError("Выберите посещённый тур этого креатора.");
       return;
     }
-    try {
-      const url = new URL(contentLink);
-      if (!["http:", "https:"].includes(url.protocol)) throw new Error();
-    } catch {
+    if (!isValidContentLink(contentLink)) {
       setContentError("Укажите корректную прямую ссылку на публикацию.");
       return;
     }
-    if (state.content.some((item) => item.link === contentLink.trim())) {
+    const linkKey = normalizeContentLink(contentLink);
+    if (
+      state.content.some(
+        (item) => normalizeContentLink(item.link) === linkKey,
+      )
+    ) {
       setContentError("Такая ссылка уже добавлена.");
       return;
     }
-    const item: ContentItem = {
-      id: `content-${Date.now()}`,
-      creator,
-      date: booking.date,
-      tourId: contentTour,
-      link: contentLink.trim(),
-      createdAt: new Date().toISOString(),
-    };
-    persist({ ...state, content: [item, ...state.content] });
-    setActiveCreator(creator);
-    setProfileInput(creator);
-    setContentTour("");
-    setContentLink("");
-    setContentError("");
-    notify("Контент добавлен и связан с тестовой записью.");
-  }
 
-  function resetDemo() {
-    const next = cloneInitialState();
-    persist(next);
-    setActiveCreator("");
-    setProfileInput("@evgivi");
-    setPanel(null);
-    notify("Демо-данные восстановлены.");
+    setWriteBusy(true);
+    try {
+      const latest = await fetchWorkingState();
+      const existingCreator = latest.bookings.find(
+        (booking) => booking.creator === creator,
+      );
+      if (existingCreator) creator = existingCreator.creator;
+      const booking = latest.bookings
+        .filter(
+          (item) =>
+            item.creator === creator && item.tourId === contentTour,
+        )
+        .sort((a, b) => {
+          const aCompleted = a.date <= DEMO_TODAY ? 1 : 0;
+          const bCompleted = b.date <= DEMO_TODAY ? 1 : 0;
+          return bCompleted - aCompleted || b.date.localeCompare(a.date);
+        })[0];
+      if (!booking) {
+        saveCachedState(latest);
+        setContentError(
+          "Ник не найден среди актуальных записей на выбранный тур.",
+        );
+        return;
+      }
+      if (
+        latest.content.some(
+          (item) => normalizeContentLink(item.link) === linkKey,
+        )
+      ) {
+        saveCachedState(latest);
+        setContentError("Такая ссылка уже добавлена.");
+        return;
+      }
+
+      const { payload, optimistic } = createContentPayload({
+        creator,
+        booking,
+        link: contentLink,
+      });
+      const dedupeKey = String(payload.dedupeKey);
+      if (wasRecentlyWritten(dedupeKey)) {
+        setContentError("Такая ссылка уже отправлена.");
+        return;
+      }
+
+      await sendWorkingPayload(payload);
+      rememberWrite(dedupeKey);
+      saveCachedState({
+        ...latest,
+        content: [optimistic, ...latest.content],
+      });
+      setDataStatus("live");
+      setLastSynced(syncLabel());
+      setActiveCreator(creator);
+      setProfileInput(creator);
+      setContentTour("");
+      setContentLink("");
+      setContentError("");
+      notify("Контент добавлен в рабочую базу и связан с поездкой.");
+      window.setTimeout(() => {
+        void refreshWorkingData(false);
+      }, 2200);
+    } catch {
+      setContentError(
+        "Не удалось проверить или добавить материал. Повторите попытку.",
+      );
+    } finally {
+      setWriteBusy(false);
+    }
   }
 
   function renderPanel() {
@@ -1746,6 +2222,7 @@ export default function CreacloudApp() {
             onTransferSource={setTransferSourceId}
             onSubmit={submitBooking}
             onCancelBooking={cancelBooking}
+            busy={writeBusy}
           />
         </ModalShell>
       );
@@ -1816,6 +2293,7 @@ export default function CreacloudApp() {
             onLink={setContentLink}
             onSubmit={submitContent}
             onResults={() => setPanel("results")}
+            busy={writeBusy}
           />
         </ModalShell>
       );
@@ -1875,11 +2353,19 @@ export default function CreacloudApp() {
       <ModalShell
         strong="Сводка"
         light="мастерской"
-        kicker="События и тестовый режим"
+        kicker="События и синхронизация"
         onClose={closePanel}
         className="modal--notices"
       >
-        <NoticesPanel state={state} onReset={resetDemo} />
+        <NoticesPanel
+          state={state}
+          dataStatus={dataStatus}
+          lastSynced={lastSynced}
+          refreshing={refreshing}
+          onRefresh={() => {
+            void refreshWorkingData();
+          }}
+        />
       </ModalShell>
     );
   }
@@ -1898,6 +2384,7 @@ export default function CreacloudApp() {
           >
             <Dashboard
               state={state}
+              weather={weather}
               onOpen={(next) => {
                 if (next === "booking") openBooking("new");
                 else setPanel(next);
